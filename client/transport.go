@@ -46,6 +46,10 @@ func defaultProfile() Profile {
 	}
 	p.Host = "127.0.0.1"
 	p.Jump = "g15"
+	// The preconfigured development host runs managed LibVNCServer separately.
+	// Generic deployments keep the standard ports above.
+	p.Port = 2225
+	p.VNCPort = 5905
 	p.Identity = filepath.Join(state, "client")
 	p.KnownHosts = filepath.Join(state, "known_hosts")
 	p.HostKeyAlias = "sshvnc-g15"
@@ -61,7 +65,7 @@ func (p Profile) password() (string, error) {
 	if !saved.StoredPassword || p.Host != saved.Host || p.Port != saved.Port || p.Jump != saved.Jump ||
 		p.HostKeyAlias != saved.HostKeyAlias || p.KnownHosts != saved.KnownHosts || p.User != saved.User ||
 		p.Identity != saved.Identity || p.VNCPort != saved.VNCPort {
-		return "", errors.New("已保存的密码只用于原始 g15 配置，请输入 VNC 密码")
+		return "", errors.New("已保存的密码只用于预配置的 g15 连接，请输入 VNC 密码")
 	}
 	password, err := os.ReadFile(filepath.Join(filepath.Dir(saved.Identity), "vnc-password.txt"))
 	if err != nil {

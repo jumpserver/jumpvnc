@@ -19,13 +19,20 @@ import (
 )
 
 type session struct {
-	ssh     *ssh.Client
-	files   *sftp.Client
-	bridge  *http.Server
-	ctx     context.Context
-	cancel  context.CancelFunc
-	closing sync.Once
-	busy    atomic.Bool
+	id       string
+	started  time.Time
+	received atomic.Int64
+	sent     atomic.Int64
+	rttMu    sync.RWMutex
+	rtt      time.Duration
+	rttAt    time.Time
+	ssh      *ssh.Client
+	files    *sftp.Client
+	bridge   *http.Server
+	ctx      context.Context
+	cancel   context.CancelFunc
+	closing  sync.Once
+	busy     atomic.Bool
 }
 
 func openSession(p Profile) (*session, string, error) {
@@ -35,14 +42,11 @@ func openSession(p Profile) (*session, string, error) {
 		cancel()
 		return nil, "", err
 	}
-	s := &session{ctx: ctx, cancel: cancel, ssh: client}
+	s := &session{id: rand.Text(), started: time.Now(), ctx: ctx, cancel: cancel, ssh: client}
 	timer := time.AfterFunc(sshTimeout, func() { client.Close() })
 	s.files, err = sftp.NewClient(client)
 	timer.Stop()
-	if err != nil {
-		s.close()
-		return nil, "", fmt.Errorf("打开 SFTP: %w", err)
-	}
+	// File access is optional. A denied SFTP subsystem must not deny desktop access.
 	url, err := s.startBridge(p.VNCPort)
 	if err != nil {
 		s.close()
@@ -70,20 +74,26 @@ func (s *session) close() {
 }
 
 func (s *session) keepAlive() {
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for {
+		start := time.Now()
+		timer := time.AfterFunc(sshTimeout, func() { s.close() })
+		ok, _, err := s.ssh.SendRequest("keepalive@openssh.com", true, nil)
+		timer.Stop()
+		if err != nil {
+			s.close()
+			return
+		}
+		if ok {
+			s.rttMu.Lock()
+			s.rtt, s.rttAt = time.Since(start), time.Now()
+			s.rttMu.Unlock()
+		}
 		select {
 		case <-s.ctx.Done():
 			return
 		case <-ticker.C:
-			timer := time.AfterFunc(sshTimeout, func() { s.close() })
-			_, _, err := s.ssh.SendRequest("keepalive@openssh.com", true, nil)
-			timer.Stop()
-			if err != nil {
-				s.close()
-				return
-			}
 		}
 	}
 }
@@ -126,11 +136,12 @@ func (s *session) serveVNC(w http.ResponseWriter, r *http.Request, target string
 	defer conn.CloseNow()
 	ctx, cancel := context.WithCancel(s.ctx)
 	defer cancel()
-	vnc, err := s.ssh.DialContext(ctx, "tcp", target)
+	rawVNC, err := s.ssh.DialContext(ctx, "tcp", target)
 	if err != nil {
 		conn.Close(websocket.StatusPolicyViolation, "VNC channel unavailable")
 		return
 	}
+	vnc := &measuredConn{Conn: rawVNC, received: &s.received, sent: &s.sent}
 	defer vnc.Close()
 	stop := context.AfterFunc(ctx, func() { vnc.Close() })
 	defer stop()

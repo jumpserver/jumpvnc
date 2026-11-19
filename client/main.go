@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 	"log"
 	"path"
+	"path/filepath"
 	"sync"
 
 	"github.com/egoist/mygo"
@@ -13,14 +15,19 @@ import (
 
 var transferProgress = mygo.NewEvent[Progress]("transfer-progress")
 
+//go:embed resources/icon.png
+var appIcon []byte
+
 type Desktop struct {
 	mu      sync.Mutex
 	current *session
 }
 
 type Connection struct {
+	ID       string `json:"id"`
 	URL      string `json:"url"`
 	Password string `json:"password,omitempty"`
+	Files    bool   `json:"files"`
 }
 
 func (*Desktop) Defaults() Profile { return defaultProfile() }
@@ -40,7 +47,7 @@ func (d *Desktop) Connect(p Profile) (Connection, error) {
 		return Connection{}, err
 	}
 	d.current = s
-	return Connection{URL: url, Password: password}, nil
+	return Connection{ID: s.id, URL: url, Password: password, Files: s.files != nil}, nil
 }
 
 func (d *Desktop) Disconnect() {
@@ -62,7 +69,7 @@ func (d *Desktop) active() (*session, error) {
 }
 
 func (d *Desktop) List(directory string) ([]FileEntry, error) {
-	s, err := d.active()
+	s, err := d.fileSession()
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +77,7 @@ func (d *Desktop) List(directory string) ([]FileEntry, error) {
 }
 
 func (d *Desktop) Mkdir(directory, name string) error {
-	s, err := d.active()
+	s, err := d.fileSession()
 	if err != nil {
 		return err
 	}
@@ -84,7 +91,7 @@ func (d *Desktop) Mkdir(directory, name string) error {
 }
 
 func (d *Desktop) UploadDialog(ctx context.Context, directory string) (int, error) {
-	s, err := d.active()
+	s, err := d.fileSession()
 	if err != nil {
 		return 0, err
 	}
@@ -98,7 +105,7 @@ func (d *Desktop) UploadDialog(ctx context.Context, directory string) (int, erro
 }
 
 func (d *Desktop) UploadDrop(ctx context.Context, files []string, directory string) (int, error) {
-	s, err := d.active()
+	s, err := d.fileSession()
 	if err != nil {
 		return 0, err
 	}
@@ -123,7 +130,7 @@ func uploadFiles(s *session, win *mygo.Window, files []string, directory string)
 }
 
 func (d *Desktop) Download(ctx context.Context, remote string) (bool, error) {
-	s, err := d.active()
+	s, err := d.fileSession()
 	if err != nil {
 		return false, err
 	}
@@ -145,18 +152,49 @@ func (d *Desktop) Download(ctx context.Context, remote string) (bool, error) {
 	return err == nil, err
 }
 
+func (d *Desktop) fileSession() (*session, error) {
+	s, err := d.active()
+	if err != nil {
+		return nil, err
+	}
+	if s.files == nil {
+		return nil, errors.New("文件传输不可用，桌面连接不受影响")
+	}
+	return s, nil
+}
+
 func main() {
-	desktop := &Desktop{}
-	mygo.Bind(desktop)
-	mygo.App.WhenReady(func() {
-		win := mygo.NewWindow(mygo.WindowOptions{
-			Title: "SSH VNC", URL: "/", Width: 1240, Height: 790,
-			MinWidth: 900, MinHeight: 580, BackgroundColor: "#111820",
-		})
-		win.OnClosed(func() { mygo.App.Quit() })
+	mygo.Theme.SetSource(mygo.ThemeLight)
+	// Keep connection profiles and window state across the SVNC display rename.
+	dataDir, err := mygo.App.Path(mygo.PathAppData)
+	if err != nil {
+		log.Fatal(err)
+	}
+	mygo.App.SetPath(mygo.PathUserData, filepath.Join(dataDir, "SSH VNC"))
+	viewer := &Viewer{windows: make(map[int]*viewerWindow)}
+	manager := &Manager{viewer: viewer}
+	mygo.Bind(manager)
+	mygo.Bind(viewer)
+	mygo.App.OnActivate(func(_ bool) {
+		if manager.store != nil && (manager.window == nil || manager.window.IsDestroyed()) {
+			manager.showWindow()
+		}
 	})
-	err := mygo.App.Run()
-	desktop.Disconnect()
+	mygo.App.WhenReady(func() {
+		// Also set the running icon so an older Launch Services cache cannot
+		// leave the Dock showing the placeholder after an in-place rebuild.
+		if err := mygo.App.Dock.SetIcon(appIcon); err != nil {
+			log.Printf("设置 Dock 图标: %v", err)
+		}
+		dir, err := mygo.App.Path(mygo.PathUserData)
+		if err != nil {
+			log.Fatal(err)
+		}
+		manager.store = newLibraryStore(dir)
+		manager.showWindow()
+	})
+	err = mygo.App.Run()
+	viewer.closeAll()
 	if err != nil {
 		log.Fatal(err)
 	}

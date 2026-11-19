@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src ws://127.0.0.1:*; object-src 'none'; base-uri 'none'">
+  <title>SVNC</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <header class="appbar">
+    <div class="connection-summary">
+      <span class="desktop-chip" id="desktop-host"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></svg><span id="connection-name">SVNC</span><span id="connection-status" class="sr-only" aria-live="polite">未连接</span></span>
+      <div id="connection-metrics" class="connection-metrics" hidden>
+        <span id="status-indicator" class="signal-indicator" data-level="0" role="img" aria-label="SSH 延迟采样中" title="SSH 往返延迟采样中"><svg viewBox="0 0 18 16" aria-hidden="true" fill="currentColor"><rect class="signal-bar" x="1" y="11" width="3" height="4" rx=".8"/><rect class="signal-bar" x="5.5" y="8" width="3" height="7" rx=".8"/><rect class="signal-bar" x="10" y="4.5" width="3" height="10.5" rx=".8"/><rect class="signal-bar" x="14.5" y="1" width="3" height="14" rx=".8"/></svg><span id="header-rtt" class="sr-only" data-metric>—</span></span>
+        <span id="header-bandwidth" data-metric title="桌面接收速率，不含文件传输">—</span>
+        <span id="header-resolution" data-metric title="远端画面分辨率">—</span>
+        <span id="header-quality" title="客户端请求的画质档位">均衡</span>
+      </div>
+    </div>
+    <nav class="toolbar" aria-label="桌面工具">
+      <button id="clipboard-toggle" class="tool-button" type="button" title="剪贴板" disabled><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="4" width="14" height="17" rx="2"/><path d="M16 4V2H3v16h4"/></svg><span>剪贴板</span></button>
+      <button id="files-toggle" class="tool-button" type="button" title="文件管理" aria-controls="files-panel" aria-expanded="false" disabled><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg><span>文件管理</span><i id="transfer-dot" hidden></i></button>
+      <button id="settings-toggle" class="tool-button" type="button" title="设置" aria-controls="settings-panel" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m10 3-.6 2.3-2 .9L5.2 5.5 3 9.3l1.7 1.6v2.2L3 14.7l2.2 3.8 2.2-.7 2 .9L10 21h4l.6-2.3 2-.9 2.2.7 2.2-3.8-1.7-1.6v-2.2L21 9.3l-2.2-3.8-2.2.7-2-.9L14 3Z"/><circle cx="12" cy="12" r="3"/></svg><span>设置</span></button>
+    </nav>
+  </header>
+  <main class="workspace">
+    <section class="desktop" aria-label="远程桌面">
+      <div id="vnc-screen" hidden></div>
+        <div id="connection-view">
+          <form id="connect-form">
+            <h2>连接到 Agent</h2>
+            <div class="fields">
+              <label>Agent 主机<input name="host" required autocomplete="off" placeholder="127.0.0.1"></label>
+              <label>SSH 端口<input name="port" type="number" min="1" max="65535" required></label>
+              <label>SSH 用户名<input name="user" required autocomplete="off"></label>
+              <label>VNC 密码<input name="vncPassword" type="password" autocomplete="off"></label>
+            </div>
+            <label id="stored-row" class="checkbox-row" hidden><input name="storedPassword" type="checkbox">使用已保存的 g15 VNC 密码</label>
+            <details id="advanced">
+              <summary>SSH 与 VNC 设置</summary>
+              <div class="fields advanced">
+                <label>SSH 跳板机<input name="jump" autocomplete="off" placeholder="可选，例如 g15"></label>
+                <label>VNC 端口<input name="vncPort" type="number" min="1" max="65535" required></label>
+                <label class="wide">SSH 私钥<input name="identity" autocomplete="off" placeholder="~/.ssh/id_ed25519" required></label>
+                <label class="wide">known_hosts<input name="knownHosts" autocomplete="off" required></label>
+                <label class="wide">主机密钥别名<input name="hostKeyAlias" autocomplete="off" placeholder="可选"></label>
+              </div>
+            </details>
+            <p id="connect-error" role="alert" hidden></p>
+            <button id="connect" class="primary" type="submit">连接</button>
+          </form>
+        </div>
+    </section>
+    <aside id="files-panel" class="side-panel" aria-label="文件管理" hidden>
+      <div class="files-heading">
+        <div><h2>文件管理</h2><span class="files-label">SFTP</span></div>
+        <div class="panel-actions"><button type="button" id="refresh" class="subtle" title="刷新目录" disabled>刷新</button><button type="button" id="files-close" class="icon-button close-panel" aria-label="关闭文件管理">×</button></div>
+      </div>
+      <nav id="breadcrumbs" aria-label="远程目录"></nav>
+      <div class="file-actions">
+        <button type="button" id="upload" class="primary" disabled>上传</button>
+        <button type="button" id="download" disabled>下载</button>
+        <button type="button" id="mkdir" disabled>新建文件夹</button>
+      </div>
+      <div class="list-head" aria-hidden="true"><span>名称</span><span>大小</span></div>
+      <div id="file-list" aria-label="文件列表"></div>
+      <div class="drop-target"><span aria-hidden="true">↑</span><span id="drop-label">将文件拖到这里上传</span></div>
+      <footer id="transfer-area" aria-live="polite" hidden>
+        <progress id="progress" hidden></progress>
+        <div id="transfer-message"></div>
+      </footer>
+    </aside>
+    <aside id="settings-panel" class="side-panel" aria-label="设置" hidden>
+      <div class="panel-heading"><h2>设置</h2><button id="settings-close" class="icon-button close-panel" type="button" aria-label="关闭设置">×</button></div>
+      <div class="settings-content">
+        <section class="setting-section">
+          <label class="setting-row" for="quality-profile"><span>画质</span><select id="quality-profile"><option value="smooth">流畅</option><option value="balanced" selected>均衡</option><option value="sharp">清晰</option></select></label>
+          <p id="quality-settings" class="setting-note"></p>
+        </section>
+        <section class="setting-section">
+          <h3>当前连接</h3>
+          <p id="connection-endpoint" class="connection-info">尚未连接</p>
+          <p id="connection-backend" class="setting-note"></p>
+        </section>
+        <details id="performance-panel" class="diagnostics">
+          <summary>详细指标</summary>
+          <p class="setting-note">客户端 noVNC 1.7.0</p>
+          <dl class="performance-grid">
+            <div><dt title="完成且包含画面数据的 RFB 更新次数，不是服务端抓屏 FPS">画面更新</dt><dd id="metric-updates" data-metric>—</dd></div>
+            <div><dt title="VNC 通道的接收速率，不含 SFTP 和 SSH 加密开销">桌面接收</dt><dd id="metric-bandwidth" data-metric>—</dd></div>
+            <div><dt title="SSH 请求往返时间，每 5 秒探测；不是键鼠到画面的端到端延迟">SSH RTT</dt><dd id="metric-rtt" data-metric>—</dd></div>
+            <div class="metric-wide"><dt title="最近采样期间收到的图像编码，按完成的数据块数量排序">实际画面编码</dt><dd id="metric-encoding" data-metric>—</dd></div>
+            <div><dt title="每块数据的同步解码处理耗时，不含浏览器异步图片或视频解码">解码处理 / 块</dt><dd id="metric-decode" data-metric>—</dd></div>
+            <div><dt title="Canvas 画面复制调用的平均同步耗时，不含 GPU 最终呈现">绘制调用 / 次</dt><dd id="metric-paint" data-metric>—</dd></div>
+            <div><dt title="等待 noVNC 绘制队列清空的平均时间；0 表示本次未发生等待">绘制队列等待</dt><dd id="metric-wait" data-metric>—</dd></div>
+            <div><dt title="noVNC 待处理的绘制操作数量，包含图片及画面复制等操作">绘制队列</dt><dd id="metric-queue" data-metric>—</dd></div>
+            <div><dt title="noVNC 尚未解析的接收数据，也可能包含未完整到达的数据块">未解析数据</dt><dd id="metric-backlog" data-metric>—</dd></div>
+            <div><dt>远端画面</dt><dd id="metric-resolution" data-metric>—</dd></div>
+            <div><dt title="本次连接累计收到的 VNC 数据，不含文件传输">桌面累计接收</dt><dd id="metric-received" data-metric>—</dd></div>
+            <div><dt title="收到独立鼠标形状后，noVNC 可在客户端绘制鼠标，移动不依赖远端画面刷新">鼠标形状</dt><dd id="metric-cursor" data-metric>—</dd></div>
+          </dl>
+          <p class="performance-note">约每秒更新。画质和压缩为客户端请求值，实际效果取决于服务端编码支持。静止画面更新率可以为 0。</p>
+
+        </details>
+      </div>
+      <footer class="settings-footer"><button id="disconnect" class="danger" type="button" hidden>断开连接</button><span id="settings-offline" class="setting-note">连接后可查看实时信息</span></footer>
+    </aside>
+  </main>
+  <dialog id="clipboard-dialog">
+    <form method="dialog">
+      <h2>文本剪贴板</h2>
+      <p>粘贴文本后发送到远端。收到的远端文本可在此选择并复制。</p>
+      <textarea id="clipboard-text" aria-label="剪贴板文本" rows="8"></textarea>
+      <div class="dialog-buttons"><button value="close">关闭</button><button type="button" id="clipboard-send" class="primary">发送到远端</button></div>
+    </form>
+  </dialog>
+  <dialog id="folder-dialog">
+    <form method="dialog">
+      <h2>新建文件夹</h2>
+      <label>文件夹名称<input id="folder-name" required autocomplete="off"></label>
+      <div class="dialog-buttons"><button value="cancel" formnovalidate>取消</button><button value="create" class="primary">创建</button></div>
+    </form>
+  </dialog>
+  <dialog id="drop-dialog">
+    <form method="dialog">
+      <h2>上传文件</h2>
+      <p id="drop-destination"></p>
+      <ul id="drop-files"></ul>
+      <div class="dialog-buttons"><button value="cancel">取消</button><button value="upload" class="primary">上传</button></div>
+    </form>
+  </dialog>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

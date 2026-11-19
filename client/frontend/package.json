@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "esbuild app.js --bundle --format=esm --outfile=../dist/app.js && cp index.html style.css ../dist/"
+    "test": "node --test *.test.js",
+    "build": "esbuild app.js manager.js --bundle --format=esm --outdir=../dist && cp index.html viewer.html style.css manager.css ../dist/"
   },
   "dependencies": {
     "@novnc/novnc": "1.7.0"
