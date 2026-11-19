@@ -1,0 +1,14 @@
+ssh:
+  listen: "127.0.0.1:2223"
+  host_key_file: ../hostkey
+  authorized_keys_file: ../authorized_keys
+  user: vncuser
+  allow_vnc: true
+sftp:
+  mode: read_write
+  root: ../exchange
+vnc:
+  engine: external
+  listen: "127.0.0.1:5902"
+  startup_timeout_seconds: 20
+audit: true

@@ -1,0 +1,10 @@
+/.DS_Store
+/build*/
+/deps/
+/libvncserver/
+/jpeg/
+/zlib/
+/vnc-password.txt
+/*.log
+/*.tar.gz
+/launcher-error.log
