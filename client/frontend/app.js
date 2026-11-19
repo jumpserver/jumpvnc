@@ -1,0 +1,377 @@
+import RFB from '@novnc/novnc';
+
+const $ = (id) => document.getElementById(id);
+const call = (method, ...args) => window.mygo.call('Desktop.' + method, ...args);
+const form = $('connect-form');
+const filesPanel = $('files-panel');
+const list = $('file-list');
+
+let client;
+let connected = false;
+let connecting = false;
+let disconnecting = false;
+let directory = '/';
+let entries = [];
+let selection;
+let listRequest = 0;
+let connectionRevision = 0;
+let transferring = false;
+let dragTimer;
+let pendingDrop;
+
+function status(message, state = '') {
+  $('connection-status').textContent = message;
+  $('status-indicator').dataset.state = state;
+}
+
+function showConnectionError(message) {
+  $('connect-error').textContent = message;
+  $('connect-error').hidden = !message;
+}
+
+function errorMessage(error) {
+  return error?.message || String(error);
+}
+
+function syncControls() {
+  $('connect').disabled = connecting || disconnecting;
+  $('connect').textContent = connecting ? '连接中…' : '连接';
+  $('disconnect').hidden = !connected && !connecting;
+  $('disconnect').disabled = disconnecting;
+  $('refresh').disabled = !connected;
+  $('upload').disabled = !connected || transferring;
+  $('download').disabled = !connected || transferring || !selection?.regular;
+  $('mkdir').disabled = !connected || transferring;
+  $('drop-label').textContent = transferring ? '正在传输文件' : '将文件拖到这里上传';
+}
+
+function listMessage(message) {
+  const text = document.createElement('p');
+  text.className = 'list-message';
+  text.textContent = message;
+  list.replaceChildren(text);
+}
+
+function showFilesOffline() {
+  directory = '/';
+  entries = [];
+  selection = undefined;
+  listRequest++;
+  $('breadcrumbs').textContent = '/';
+  listMessage('连接后显示远程文件');
+  $('transfer-area').hidden = true;
+  syncControls();
+}
+
+function connectOptions() {
+  const p = Object.fromEntries(new FormData(form));
+  return {
+    ...p,
+    host: p.host.trim(), user: p.user.trim(), jump: p.jump.trim(),
+    port: Number(p.port), vncPort: Number(p.vncPort),
+    storedPassword: form.elements.storedPassword.checked,
+  };
+}
+
+async function connect(event) {
+  event.preventDefault();
+  if (connecting || connected || disconnecting) return;
+  showConnectionError('');
+  const profile = connectOptions();
+  if (!profile.storedPassword && !profile.vncPassword) {
+    showConnectionError('请输入 VNC 密码');
+    form.elements.vncPassword.focus();
+    return;
+  }
+  connecting = true;
+  syncControls();
+  status('正在连接 SSH', 'connecting');
+  try {
+    const connection = await call('Connect', profile);
+    if (disconnecting || !connecting) return;
+    status('正在连接桌面', 'connecting');
+    $('vnc-screen').hidden = false;
+    const rfb = new RFB($('vnc-screen'), connection.url, {
+      shared: true,
+      credentials: { password: connection.password },
+    });
+    client = rfb;
+    rfb.scaleViewport = true;
+    rfb.addEventListener('connect', () => {
+      if (client !== rfb) return;
+      connecting = false;
+      connected = true;
+      $('desktop-host').textContent = profile.jump
+        ? profile.jump + ' · ' + profile.user
+        : profile.host + ' · ' + profile.user;
+      $('connection-view').hidden = true;
+      form.elements.vncPassword.value = '';
+      status('已连接', 'connected');
+      rfb.focus();
+      syncControls();
+      readDirectory('/');
+    });
+    rfb.addEventListener('securityfailure', () => {
+      if (client === rfb) disconnect('VNC 认证失败，请检查 VNC 密码');
+    });
+    rfb.addEventListener('credentialsrequired', () => {
+      if (client === rfb) disconnect('VNC 要求认证，请检查配置和 VNC 密码');
+    });
+    rfb.addEventListener('disconnect', (event) => {
+      if (client !== rfb) return;
+      disconnect(connected && event.detail.clean ? '远程桌面已关闭' : '无法继续连接远程桌面，请重试');
+    });
+  } catch (err) {
+    if (!disconnecting && connecting) await disconnect(errorMessage(err));
+  }
+}
+
+async function disconnect(message = '') {
+  if (disconnecting) return;
+  disconnecting = true;
+  connectionRevision++;
+  connecting = false;
+  connected = false;
+  transferring = false;
+  pendingDrop = undefined;
+  if ($('drop-dialog').open) $('drop-dialog').close();
+  const rfb = client;
+  client = undefined;
+  rfb?.disconnect();
+  $('vnc-screen').hidden = true;
+  $('connection-view').hidden = false;
+  $('desktop-host').textContent = '';
+  status('未连接');
+  showFilesOffline();
+  showConnectionError(message);
+  try {
+    await call('Disconnect');
+  } catch (err) {
+    showConnectionError(errorMessage(err));
+  } finally {
+    $('vnc-screen').replaceChildren();
+    disconnecting = false;
+    syncControls();
+  }
+}
+
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 ** 2) return (bytes / 1024).toFixed(1) + ' KB';
+  if (bytes < 1024 ** 3) return (bytes / 1024 ** 2).toFixed(1) + ' MB';
+  return (bytes / 1024 ** 3).toFixed(1) + ' GB';
+}
+
+function join(directory, name) {
+  return (directory === '/' ? '' : directory) + '/' + name;
+}
+
+function renderBreadcrumbs() {
+  const crumbs = $('breadcrumbs');
+  crumbs.replaceChildren();
+  let prefix = '';
+  const names = directory.split('/').filter(Boolean);
+  for (const [index, name] of ['交换目录', ...names].entries()) {
+    if (index > 0) {
+      prefix += '/' + name;
+      crumbs.append(' / ');
+    }
+    const target = prefix || '/';
+    const crumb = document.createElement('button');
+    crumb.type = 'button';
+    crumb.textContent = name;
+    crumb.title = target;
+    if (index === names.length) crumb.setAttribute('aria-current', 'location');
+    crumb.addEventListener('click', () => readDirectory(target));
+    crumbs.append(crumb);
+  }
+  crumbs.scrollLeft = crumbs.scrollWidth;
+}
+
+function renderFiles() {
+  list.replaceChildren();
+  if (!entries.length) {
+    listMessage('此目录为空');
+    return;
+  }
+  for (const entry of entries) {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'file-row';
+    row.title = entry.name;
+    if (!entry.dir) row.setAttribute('aria-pressed', String(entry === selection));
+    const main = document.createElement('span');
+    main.className = 'file-main';
+    const icon = document.createElement('span');
+    icon.className = 'file-icon' + (entry.dir ? ' folder' : '');
+    icon.setAttribute('aria-hidden', 'true');
+    const name = document.createElement('span');
+    name.className = 'file-name';
+    name.textContent = entry.name;
+    main.append(icon, name);
+    const size = document.createElement('span');
+    size.className = 'file-size';
+    size.textContent = entry.dir ? '—' : formatSize(entry.size);
+    row.append(main, size);
+    row.addEventListener('click', () => {
+      if (entry.dir) {
+        readDirectory(join(directory, entry.name));
+        return;
+      }
+      list.querySelector('[aria-pressed="true"]')?.setAttribute('aria-pressed', 'false');
+      row.setAttribute('aria-pressed', 'true');
+      selection = entry;
+      syncControls();
+    });
+    row.addEventListener('dblclick', () => {
+      if (entry.regular && !transferring) download();
+    });
+    list.append(row);
+  }
+}
+
+async function readDirectory(target) {
+  if (!connected) return;
+  const request = ++listRequest;
+  selection = undefined;
+  syncControls();
+  listMessage('正在读取目录…');
+  try {
+    const next = await call('List', target);
+    if (request !== listRequest) return;
+    directory = target;
+    entries = next;
+    renderBreadcrumbs();
+    renderFiles();
+  } catch (err) {
+    if (request === listRequest) {
+      listMessage(errorMessage(err));
+    }
+  }
+}
+
+function transferMessage(text, error = false) {
+  $('transfer-area').hidden = !text;
+  $('transfer-area').classList.toggle('error', error);
+  $('progress').hidden = true;
+  $('transfer-message').textContent = text;
+}
+
+async function transfer(operation, target, refreshAfter) {
+  if (!connected || transferring) return;
+  const revision = connectionRevision;
+  transferring = true;
+  syncControls();
+  transferMessage('准备传输…');
+  try {
+    const message = await operation();
+    if (connectionRevision === revision) transferMessage(message);
+  } catch (err) {
+    if (connectionRevision === revision) transferMessage(errorMessage(err), true);
+  } finally {
+    if (connectionRevision === revision) {
+      transferring = false;
+      syncControls();
+      if (refreshAfter && connected && directory === target) readDirectory(target);
+    }
+  }
+}
+
+function download() {
+  if (!selection?.regular) return;
+  const selected = selection;
+  const target = directory;
+  transfer(async () => {
+    const complete = await call('Download', join(target, selected.name));
+    return complete ? '已下载 ' + selected.name : '';
+  }, target, false);
+}
+
+window.mygo.on('transfer-progress', ({ name, done, total }) => {
+  if (!transferring || !connected) return;
+  const progress = $('progress');
+  progress.hidden = false;
+  progress.max = Math.max(1, total);
+  progress.value = done;
+  $('transfer-message').textContent = name + ' · ' + formatSize(done) + ' / ' + formatSize(total);
+});
+
+window.mygo.on('mygo:file-drop', ({ paths, x, y }) => {
+  filesPanel.classList.remove('dropping');
+  if (!connected || transferring || !document.elementFromPoint(x, y)?.closest('#files-panel') ||
+      !paths.length || $('drop-dialog').open) return;
+  pendingDrop = { paths, target: directory };
+  $('drop-destination').textContent = '目标目录 ' + directory;
+  $('drop-files').replaceChildren(...paths.map((file) => {
+    const item = document.createElement('li');
+    item.textContent = file.split(/[\\/]/).pop();
+    return item;
+  }));
+  $('drop-dialog').returnValue = '';
+  $('drop-dialog').showModal();
+});
+
+$('drop-dialog').addEventListener('close', () => {
+  const drop = pendingDrop;
+  pendingDrop = undefined;
+  if (!drop || $('drop-dialog').returnValue !== 'upload') return;
+  transfer(async () => {
+    const count = await call('UploadDrop', drop.paths, drop.target);
+    return '已上传 ' + count + ' 项';
+  }, drop.target, true);
+});
+
+filesPanel.addEventListener('dragover', (event) => {
+  if (!connected || transferring || !event.dataTransfer.types.includes('Files')) return;
+  filesPanel.classList.add('dropping');
+  clearTimeout(dragTimer);
+  dragTimer = setTimeout(() => filesPanel.classList.remove('dropping'), 160);
+});
+
+form.addEventListener('submit', connect);
+$('disconnect').addEventListener('click', () => disconnect());
+$('refresh').addEventListener('click', () => readDirectory(directory));
+$('upload').addEventListener('click', () => {
+  const target = directory;
+  transfer(async () => {
+    const count = await call('UploadDialog', target);
+    return count ? '已上传 ' + count + ' 项' : '';
+  }, target, true);
+});
+$('download').addEventListener('click', download);
+$('mkdir').addEventListener('click', () => {
+  $('folder-name').value = '';
+  $('folder-dialog').returnValue = '';
+  $('folder-dialog').showModal();
+  $('folder-name').focus();
+});
+$('folder-dialog').addEventListener('close', async () => {
+  if ($('folder-dialog').returnValue !== 'create' || !connected) return;
+  const target = directory;
+  try {
+    await call('Mkdir', target, $('folder-name').value);
+    if (directory === target) readDirectory(target);
+  } catch (err) {
+    transferMessage(errorMessage(err), true);
+  }
+});
+
+async function init() {
+  showFilesOffline();
+  try {
+    const profile = await call('Defaults');
+    for (const [key, value] of Object.entries(profile)) {
+      if (key === 'storedPassword') {
+        $('stored-row').hidden = !value;
+        form.elements.storedPassword.checked = value;
+      } else if (form.elements[key]) {
+        form.elements[key].value = value;
+      }
+    }
+    $('advanced').open = !profile.identity;
+  } catch (err) {
+    showConnectionError(errorMessage(err));
+  }
+}
+
+init();

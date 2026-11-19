@@ -1,0 +1,27 @@
+ssh:
+  listen: "0.0.0.0:2222"
+  host_key_file: ssh_host_ed25519_key
+  authorized_keys_file: authorized_keys
+  user: vncuser
+  allow_vnc: true
+  limits:
+    max_connections: 32
+    max_channels_per_connection: 8
+    handshakes_per_minute_per_ip: 30
+    handshake_timeout_seconds: 10
+    idle_timeout_seconds: 1800
+
+sftp:
+  mode: read_write
+  root: exchange
+  max_file_size_mib: 1024
+  max_handles_per_session: 64
+
+vnc:
+  engine: tigervnc
+  listen: "127.0.0.1:5900"
+  password_file: vnc.passwd
+  view_only: false
+  startup_timeout_seconds: 15
+
+audit: true

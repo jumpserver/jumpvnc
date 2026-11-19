@@ -1,0 +1,16 @@
+[admin]
+SocketConnect=1
+AllowLoopback=1
+LoopbackOnly=1
+UseIpv6=0
+HTTPConnect=0
+AuthRequired=1
+MSLogonRequired=0
+AutoPortSelect=0
+PortNumber=5900
+FileTransferEnabled=0
+InputsEnabled=1
+RemoveWallpaper=0
+
+[UltraVNC]
+; Use the UltraVNC password setup utility to generate passwd before starting the Agent.

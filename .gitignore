@@ -1,0 +1,8 @@
+/bin/
+/config.yaml
+/configs/ssh_host_*
+/configs/authorized_keys
+/configs/vnc.passwd
+/configs/exchange/
+/backends/
+/state/

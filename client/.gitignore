@@ -1,0 +1,4 @@
+/build/
+/dist/
+/frontend/generated.ts
+/frontend/node_modules/

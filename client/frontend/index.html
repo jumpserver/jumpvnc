@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src ws://127.0.0.1:*; object-src 'none'; base-uri 'none'">
+  <title>SSH VNC</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <header class="appbar">
+    <div class="brand"><span class="brand-icon" aria-hidden="true"></span>SSH VNC</div>
+    <div class="connection-state" aria-live="polite"><span id="status-indicator"></span><span id="connection-status">未连接</span></div>
+    <button id="disconnect" class="subtle" type="button" hidden>断开连接</button>
+  </header>
+
+  <main class="workspace">
+    <section class="desktop" aria-label="远程桌面">
+      <div class="desktop-heading"><h1>远程桌面</h1><span id="desktop-host"></span></div>
+      <div class="desktop-body">
+        <div id="vnc-screen" hidden></div>
+        <div id="connection-view">
+          <form id="connect-form">
+            <h2>连接到 Agent</h2>
+            <div class="fields">
+              <label>Agent 主机<input name="host" required autocomplete="off" placeholder="127.0.0.1"></label>
+              <label>SSH 端口<input name="port" type="number" min="1" max="65535" required></label>
+              <label>SSH 用户名<input name="user" required autocomplete="off"></label>
+              <label>VNC 密码<input name="vncPassword" type="password" autocomplete="off"></label>
+            </div>
+            <label id="stored-row" class="checkbox-row" hidden><input name="storedPassword" type="checkbox">使用已保存的 g15 VNC 密码</label>
+            <details id="advanced">
+              <summary>SSH 与 VNC 设置</summary>
+              <div class="fields advanced">
+                <label>SSH 跳板机<input name="jump" autocomplete="off" placeholder="可选，例如 g15"></label>
+                <label>VNC 端口<input name="vncPort" type="number" min="1" max="65535" required></label>
+                <label class="wide">SSH 私钥<input name="identity" autocomplete="off" placeholder="~/.ssh/id_ed25519" required></label>
+                <label class="wide">known_hosts<input name="knownHosts" autocomplete="off" required></label>
+                <label class="wide">主机密钥别名<input name="hostKeyAlias" autocomplete="off" placeholder="可选"></label>
+              </div>
+            </details>
+            <p id="connect-error" role="alert" hidden></p>
+            <button id="connect" class="primary" type="submit">连接</button>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <aside id="files-panel" aria-label="远程文件">
+      <div class="files-heading">
+        <div><h2>远程文件</h2><span class="files-label">SFTP</span></div>
+        <button type="button" id="refresh" class="subtle" title="刷新目录" disabled>刷新</button>
+      </div>
+      <nav id="breadcrumbs" aria-label="远程目录"></nav>
+      <div class="file-actions">
+        <button type="button" id="upload" class="primary" disabled>上传</button>
+        <button type="button" id="download" disabled>下载</button>
+        <button type="button" id="mkdir" disabled>新建文件夹</button>
+      </div>
+      <div class="list-head" aria-hidden="true"><span>名称</span><span>大小</span></div>
+      <div id="file-list" aria-label="文件列表"></div>
+      <div class="drop-target"><span aria-hidden="true">↑</span><span id="drop-label">将文件拖到这里上传</span></div>
+      <footer id="transfer-area" aria-live="polite" hidden>
+        <progress id="progress" hidden></progress>
+        <div id="transfer-message"></div>
+      </footer>
+    </aside>
+  </main>
+
+  <dialog id="folder-dialog">
+    <form method="dialog">
+      <h2>新建文件夹</h2>
+      <label>文件夹名称<input id="folder-name" required autocomplete="off"></label>
+      <div class="dialog-buttons"><button value="cancel" formnovalidate>取消</button><button value="create" class="primary">创建</button></div>
+    </form>
+  </dialog>
+  <dialog id="drop-dialog">
+    <form method="dialog">
+      <h2>上传文件</h2>
+      <p id="drop-destination"></p>
+      <ul id="drop-files"></ul>
+      <div class="dialog-buttons"><button value="cancel">取消</button><button value="upload" class="primary">上传</button></div>
+    </form>
+  </dialog>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

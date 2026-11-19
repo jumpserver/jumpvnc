@@ -1,0 +1,15 @@
+{
+  "name": "sshvnc-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild app.js --bundle --format=esm --outfile=../dist/app.js && cp index.html style.css ../dist/"
+  },
+  "dependencies": {
+    "@novnc/novnc": "1.7.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.27.4"
+  }
+}

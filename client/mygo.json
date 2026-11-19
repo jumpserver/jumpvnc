@@ -1,0 +1,11 @@
+{
+  "name": "SSH VNC",
+  "slug": "sshvnc-desktop",
+  "identifier": "com.sshvnc.desktop",
+  "version": "0.1.0",
+  "frontendDist": "dist",
+  "buildCommand": "npm --prefix frontend run build",
+  "out": "build",
+  "bindings": "frontend/generated.ts",
+  "resources": ["frontend/node_modules/@novnc/novnc/LICENSE.txt"]
+}
