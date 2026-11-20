@@ -2,6 +2,7 @@
 package vnc
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"sshvnc/internal/config"
@@ -35,13 +37,25 @@ func Start(ctx context.Context, cfg config.VNC, log *slog.Logger) (exited <-chan
 
 		cmd.Stdout = os.Stderr
 		cmd.Stderr = os.Stderr
+		var stdout, stderr *backendLogWriter
+		if cfg.Engine == "libvncserver" {
+			// Keep native library diagnostics from interleaving with JSON audit records.
+			stdout = &backendLogWriter{log: log, stream: "stdout"}
+			stderr = &backendLogWriter{log: log, stream: "stderr"}
+			cmd.Stdout, cmd.Stderr = stdout, stderr
+		}
 		if err := cmd.Start(); err != nil {
 			return nil, nil, fmt.Errorf("launch %s: %w", cfg.Engine, err)
 		}
 		processDone = make(chan error, 1)
 		waited := make(chan struct{})
 		go func() {
-			processDone <- cmd.Wait()
+			err := cmd.Wait()
+			if stdout != nil {
+				stdout.flush()
+				stderr.flush()
+			}
+			processDone <- err
 			close(waited)
 		}()
 		stop = func() {
@@ -55,6 +69,40 @@ func Start(ctx context.Context, cfg config.VNC, log *slog.Logger) (exited <-chan
 	}
 	log.Info("vnc.ready", "engine", cfg.Engine, "listen", cfg.Listen)
 	return processDone, stop, nil
+}
+
+type backendLogWriter struct {
+	log    *slog.Logger
+	stream string
+	buffer []byte
+}
+
+// Each stream has one exec.Cmd copy goroutine; Wait joins it before flush.
+func (w *backendLogWriter) Write(data []byte) (int, error) {
+	w.buffer = append(w.buffer, data...)
+	for len(w.buffer) > 0 {
+		n := bytes.IndexByte(w.buffer, '\n') + 1
+		if n == 0 {
+			if len(w.buffer) <= 8192 {
+				break
+			}
+			n = 8192
+		}
+		w.record(w.buffer[:n])
+		w.buffer = w.buffer[n:]
+	}
+	return len(data), nil
+}
+
+func (w *backendLogWriter) flush() {
+	if len(w.buffer) > 0 {
+		w.record(w.buffer)
+		w.buffer = nil
+	}
+}
+
+func (w *backendLogWriter) record(data []byte) {
+	w.log.Info("vnc.backend", "engine", "libvncserver", "stream", w.stream, "message", strings.TrimRight(string(data), "\r\n"))
 }
 
 func command(ctx context.Context, cfg config.VNC) (*exec.Cmd, error) {
@@ -97,9 +145,58 @@ func command(ctx context.Context, cfg config.VNC) (*exec.Cmd, error) {
 		cmd := exec.CommandContext(ctx, executable, "-run")
 		cmd.Dir = dir
 		return cmd, nil
+	case "libvncserver":
+		if runtime.GOOS != "windows" && runtime.GOOS != "linux" {
+			return nil, errors.New("the LibVNCServer desktop backend requires Windows or Linux X11")
+		}
+		if err := checkDesktopPassword(cfg.PasswordFile); err != nil {
+			return nil, err
+		}
+		args := []string{"--listen", cfg.Listen, "--password-file", cfg.PasswordFile,
+			"--parent-pid", fmt.Sprint(os.Getpid())}
+		if cfg.ViewOnly {
+			args = append(args, "--view-only")
+		}
+		return exec.CommandContext(ctx, cfg.Executable, args...), nil
 	default:
 		return nil, fmt.Errorf("unknown managed VNC engine %q", cfg.Engine)
 	}
+}
+
+// The desktop backend reads this file itself; the password never enters argv.
+func checkDesktopPassword(name string) error {
+	f, err := os.Open(name)
+	if err != nil {
+		return fmt.Errorf("LibVNCServer password file: %w", err)
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || (runtime.GOOS != "windows" && info.Mode().Perm()&0077 != 0) {
+		return errors.New("LibVNCServer password file must be a private regular file")
+	}
+	data, err := io.ReadAll(io.LimitReader(f, 11))
+	if err != nil {
+		return err
+	}
+	// Accept one optional LF or CRLF, but no extra lines or silent truncation.
+	if len(data) > 0 && data[len(data)-1] == '\n' {
+		data = data[:len(data)-1]
+		if len(data) > 0 && data[len(data)-1] == '\r' {
+			data = data[:len(data)-1]
+		}
+	}
+	if len(data) < 1 || len(data) > 8 {
+		return errors.New("LibVNCServer password must contain 1-8 printable ASCII bytes")
+	}
+	for _, b := range data {
+		if b < 32 || b > 126 {
+			return errors.New("LibVNCServer password must contain 1-8 printable ASCII bytes")
+		}
+	}
+	return nil
 }
 
 func waitReady(ctx context.Context, cfg config.VNC, exited <-chan error) error {

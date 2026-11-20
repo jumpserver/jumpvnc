@@ -1,0 +1,3 @@
+# Install as /etc/default/svnc-desktop. Both choices use an X11 session on Xvfb.
+# Supported values: xfce, plasma
+SVNC_DESKTOP=xfce

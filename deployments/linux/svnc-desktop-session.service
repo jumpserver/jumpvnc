@@ -1,0 +1,26 @@
+[Unit]
+Description=SVNC test desktop on a private Xvfb display
+After=network.target
+
+[Service]
+Type=exec
+User=svnc
+Group=svnc
+WorkingDirectory=/home/svnc
+Environment=DISPLAY=:10
+Environment=XAUTHORITY=/run/svnc-x11/Xauthority
+Environment=XDG_RUNTIME_DIR=/run/svnc-x11
+Environment=XDG_SESSION_TYPE=x11
+EnvironmentFile=-/etc/default/svnc-desktop
+Environment=LANG=C.UTF-8
+RuntimeDirectory=svnc-x11
+RuntimeDirectoryMode=0700
+UMask=0077
+ExecStart=/usr/local/libexec/svnc-start-desktop
+Restart=on-failure
+RestartSec=3
+KillMode=control-group
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

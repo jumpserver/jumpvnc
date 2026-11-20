@@ -46,9 +46,18 @@ ssh-keygen -q -t ed25519 -N '' -f "$tmp/ssh_host_ed25519_key"
 ssh-keygen -q -t ed25519 -N '' -f "$tmp/client"
 cp "$tmp/client.pub" "$tmp/authorized_keys"
 printf '[127.0.0.1]:2222 %s\n' "$(cut -d ' ' -f 1,2 "$tmp/ssh_host_ed25519_key.pub")" > "$tmp/hosts"
-# Fixture password used by the disposable backend and viewer.
-printf 'svnctest\n' | vncpasswd -f > "$tmp/vnc.passwd"
-cp "$repo/configs/server.example.yaml" "$tmp/config.yaml"
+# The viewer uses vncpasswd format; the native LibVNCServer backend uses a private plaintext file.
+printf 'svnctest\n' | vncpasswd -f > "$tmp/viewer.passwd"
+if [[ -n ${SVNC_TEST_LIBVNC_BACKEND:-} ]]; then
+    mkdir -p "$tmp/backends/linux"
+    cp "$SVNC_TEST_LIBVNC_BACKEND" "$tmp/backends/linux/svnc-desktop"
+    chmod 700 "$tmp/backends/linux/svnc-desktop"
+    printf 'svnctest\n' > "$tmp/vnc-password.txt"
+    cp "$repo/configs/linux.example.yaml" "$tmp/config.yaml"
+else
+    cp "$tmp/viewer.passwd" "$tmp/vnc.passwd"
+    cp "$repo/configs/server.example.yaml" "$tmp/config.yaml"
+fi
 
 DISPLAY=$desktop "$agent" -config "$tmp/config.yaml" >"$tmp/agent.log" 2>&1 &
 agent_pid=$!
@@ -85,10 +94,10 @@ DISPLAY=$desktop xterm -geometry 64x16+40+40 -T sshvnc-input -e sh -c \
     'IFS= read -r line; printf "%s\n" "$line" > "$1"' sh "$tmp/remote-input" >"$tmp/xterm.log" 2>&1 &
 pids+=("$!")
 until_ready env DISPLAY="$desktop" xdotool search --onlyvisible --name sshvnc-input >/dev/null
-DISPLAY=$viewer vncviewer -Shared -PasswordFile "$tmp/vnc.passwd" \
+DISPLAY=$viewer vncviewer -Shared -PasswordFile "$tmp/viewer.passwd" \
     127.0.0.1::15900 >"$tmp/viewer.log" 2>&1 &
 pids+=("$!")
-until_ready grep -qsi 'continuous updates' "$tmp/viewer.log"
+until_ready grep -qsi 'Using pixel format' "$tmp/viewer.log"
 viewer_window=$(DISPLAY=$viewer xdotool search --maxdepth 1 --onlyvisible --name '.+' | tail -1)
 desktop_window=$(DISPLAY=$desktop xdotool search --onlyvisible --name sshvnc-input | tail -1)
 # Xvfb has no window manager to assign keyboard focus.
@@ -99,6 +108,25 @@ until_ready sh -c 'DISPLAY=$1 xdotool getmouselocation --shell | grep -qx X=110'
 DISPLAY=$viewer xdotool type 'through-ssh-vnc'
 DISPLAY=$viewer xdotool key Return
 until_ready grep -qs '^through-ssh-vnc$' "$tmp/remote-input"
+
+if [[ -n ${SVNC_TEST_LIBVNC_BACKEND:-} ]]; then
+    # Exercise actual ExtendedClipboard through the independent TigerVNC viewer.
+    # xclip owners are bounded by the temporary X servers and also reaped on exit.
+    printf 'viewer → Linux 中文\n' > "$tmp/clipboard-in"
+    DISPLAY=$viewer xclip -quiet -selection clipboard -target UTF8_STRING -in "$tmp/clipboard-in" >"$tmp/clipboard-viewer.log" 2>&1 &
+    pids+=("$!")
+    until_ready sh -c 'timeout 1 env DISPLAY="$1" xclip -selection clipboard -target UTF8_STRING -out > "$2" 2>/dev/null && cmp -s "$2" "$3"' \
+        sh "$desktop" "$tmp/clipboard-out" "$tmp/clipboard-in"
+    printf 'Linux → viewer 中文\n' > "$tmp/clipboard-back"
+    DISPLAY=$desktop xclip -quiet -selection clipboard -target UTF8_STRING -in "$tmp/clipboard-back" >"$tmp/clipboard-desktop.log" 2>&1 &
+    pids+=("$!")
+    until_ready sh -c 'timeout 1 env DISPLAY="$1" xclip -selection clipboard -target UTF8_STRING -out > "$2" 2>/dev/null && cmp -s "$2" "$3"' \
+        sh "$viewer" "$tmp/clipboard-result" "$tmp/clipboard-back"
+    if [[ -n ${SVNC_RFB_TEST_BINARY:-} ]]; then
+        SVNC_RFB_ADDRESS=127.0.0.1:15900 SVNC_RFB_PASSWORD_FILE="$tmp/vnc-password.txt" \
+            "$SVNC_RFB_TEST_BINARY" -test.run '^TestLibVNCBackend$' -test.v
+    fi
+fi
 
 printf 'SFTP fixture\n' > "$tmp/upload"
 printf 'put "%s" /sample\nrename /sample /renamed\nget /renamed "%s"\nrm /renamed\n' \
@@ -121,4 +149,4 @@ printf 'pwd\n' | sftp -b - -P 2222 "${options[@]}" vncuser@127.0.0.1
 kill -TERM "$agent_pid"
 wait "$agent_pid"
 [[ -z $(ss -H -ltn 'sport = :5900') ]]
-echo 'OpenSSH, TigerVNC keyboard and pointer, OpenSSH SFTP, shutdown, and host key persistence passed.'
+echo 'OpenSSH, VNC keyboard and pointer, OpenSSH SFTP, shutdown, and host key persistence passed.'

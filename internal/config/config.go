@@ -97,7 +97,7 @@ func Load(name string) (Config, error) {
 			*value = filepath.Join(dir, *value)
 		}
 	}
-	if executable := cfg.VNC.Executable; executable != "" && !filepath.IsAbs(executable) && (cfg.VNC.Engine == "ultravnc" || filepath.Base(executable) != executable) {
+	if executable := cfg.VNC.Executable; executable != "" && !filepath.IsAbs(executable) && (cfg.VNC.Engine == "ultravnc" || cfg.VNC.Engine == "libvncserver" || filepath.Base(executable) != executable) {
 		cfg.VNC.Executable = filepath.Join(dir, executable)
 	}
 
@@ -183,8 +183,12 @@ func (c Config) validate() error {
 		if c.VNC.Executable == "" || c.VNC.PasswordFile != "" {
 			return errors.New("UltraVNC requires vnc.executable and uses the adjacent ultravnc.ini for authentication")
 		}
+	case "libvncserver":
+		if c.VNC.Executable == "" || c.VNC.PasswordFile == "" {
+			return errors.New("LibVNCServer requires vnc.executable and vnc.password_file")
+		}
 	default:
-		return errors.New("vnc.engine must be external, tigervnc or ultravnc")
+		return errors.New("vnc.engine must be external, tigervnc, ultravnc or libvncserver")
 	}
 	return nil
 }

@@ -1,8 +1,9 @@
 import RFB from '@novnc/novnc';
 import { applyQuality, NetworkWindow, qualityProfiles } from './performance.js';
 import { measureRFB } from './rfb-performance.js';
+import { nativeRFB } from './native-rfb.js';
 
-const MeasuredRFB = measureRFB(RFB);
+const MeasuredRFB = measureRFB(nativeRFB(RFB));
 
 const $ = (id) => document.getElementById(id);
 const call = (method, ...args) => window.mygo.call('Viewer.' + method, ...args);

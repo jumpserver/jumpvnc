@@ -1,0 +1,24 @@
+[Unit]
+Description=SVNC SSH SFTP and LibVNCServer agent
+Requires=svnc-desktop-session.service
+After=svnc-desktop-session.service
+
+[Service]
+Type=exec
+User=svnc
+Group=svnc
+WorkingDirectory=/home/svnc
+Environment=DISPLAY=:10
+Environment=XAUTHORITY=/run/svnc-x11/Xauthority
+Environment=XDG_SESSION_TYPE=x11
+Environment=LANG=C.UTF-8
+UMask=0077
+ExecStartPre=/usr/local/libexec/svnc-wait-desktop
+ExecStart=/opt/svnc/bin/sshvnc -config /opt/svnc/state/config.yaml
+Restart=on-failure
+RestartSec=3
+KillMode=control-group
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
