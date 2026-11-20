@@ -11,11 +11,11 @@ import (
 func testLibrary(t *testing.T) *libraryStore {
 	t.Helper()
 	return &libraryStore{filename: filepath.Join(t.TempDir(), "connections.json"),
-		initial: Library{Version: 1, Folders: []Folder{}, Servers: []Server{}}}
+		initial: Library{Version: 1, Folders: []Folder{}, Servers: []Server{}}, passwords: &memoryPasswordStore{values: map[string]savedPasswords{}}}
 }
 
 func testServer() Server {
-	return Server{Name: "工作站 2", Profile: Profile{Host: "127.0.0.1", Port: 2222, User: "desktop",
+	return Server{Name: "工作站 2", Profile: Profile{Host: "127.0.0.1", Port: 5922, User: "desktop",
 		VNCPort: 5900, Identity: "~/.ssh/id_ed25519", KnownHosts: "~/.ssh/known_hosts", VNCPassword: "never-persist-this"}}
 }
 
@@ -146,5 +146,123 @@ func TestLibraryConcurrentMutationsDoNotLoseConnections(t *testing.T) {
 	}
 	if len(lib.Servers) != 12 {
 		t.Fatalf("lost updates: saved %d connections", len(lib.Servers))
+	}
+}
+
+func TestSubsystemProfileAndLegacyLibrary(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	profile := defaultProfile()
+	if profile.Transport != "subsystem" || profile.Port != 5922 {
+		t.Fatalf("unexpected default: %+v", profile)
+	}
+	s := testLibrary(t)
+	server := testServer()
+	server.Profile.Transport, server.Profile.VNCPort = "subsystem", 0
+	lib, err := s.saveServer(server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lib.Servers[0].Profile.Transport != "subsystem" {
+		t.Fatal("subsystem setting not saved")
+	}
+	server.Profile.Transport = "unsupported"
+	if _, err := s.saveServer(server); err == nil {
+		t.Fatal("unknown transport accepted")
+	}
+
+	legacy := `{"version":1,"folders":[],"servers":[{"id":"legacy","name":"old Agent","profile":{"host":"127.0.0.1","port":2225,"vncPort":5905}}]}`
+	if err := os.WriteFile(s.filename, []byte(legacy), 0600); err != nil {
+		t.Fatal(err)
+	}
+	lib, err = s.read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := lib.Servers[0].Profile
+	if p.Transport != "forward" || p.Port != 2225 || p.VNCPort != 5905 {
+		t.Fatalf("changed legacy connection: %+v", p)
+	}
+	data, err := os.ReadFile(s.filename)
+	if err != nil || string(data) != legacy {
+		t.Fatal("reading library rewrote legacy file")
+	}
+}
+
+func TestMinimalSVNCProfile(t *testing.T) {
+	s := testLibrary(t)
+	lib, err := s.saveServer(Server{Name: "desktop", Profile: Profile{Host: "desktop.example", TrustHostKey: "temporary-confirmation"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := lib.Servers[0].Profile
+	if p.Port != 5922 || p.User != "" || p.Transport != "subsystem" || p.TrustHostKey != "" {
+		t.Fatalf("unexpected minimal profile defaults: %+v", p)
+	}
+	if p.Identity != "" || p.KnownHosts != "" {
+		t.Fatal("minimal profile requires manual identity paths")
+	}
+	data, err := os.ReadFile(s.filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(data, []byte("temporary-confirmation")) {
+		t.Fatal("persisted a one-time host identity approval")
+	}
+}
+
+func TestViewerProfileSavePreservesConnectionMetadata(t *testing.T) {
+	s := testLibrary(t)
+	server := testServer()
+	server.Profile.User = ""
+	server.Profile.StoredPassword = true
+	lib, err := s.saveServer(server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server = lib.Servers[0]
+	if _, err := s.favorite(server.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	server.Name = "renamed elsewhere"
+	server.Favorite = true
+	lib, err = s.saveServer(server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := lib.Servers[0]
+	profile := previous.Profile
+	profile.User = "entered-account"
+	saved, err := s.saveConnectionProfile(previous.ID, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Name != "renamed elsewhere" || !saved.Favorite || saved.FolderID != previous.FolderID || saved.CreatedAt != previous.CreatedAt || saved.LastOpened != previous.LastOpened {
+		t.Fatal("viewer save overwrote manager metadata")
+	}
+	if !saved.Profile.StoredPassword || saved.Profile.PasswordRef != previous.Profile.PasswordRef {
+		t.Fatal("saving a previously missing account discarded the saved password")
+	}
+	resolved, err := s.resolvePasswords(saved.ID, saved.Profile)
+	if err != nil || resolved.VNCPassword != "never-persist-this" {
+		t.Fatal("viewer credential save could not be reused")
+	}
+	profile.VNCPassword = "new-vnc-password"
+	profile.StoredPassword = true
+	saved, err = s.saveConnectionProfile(saved.ID, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Profile.VNCPassword != "" {
+		t.Fatal("viewer save returned a plaintext password")
+	}
+	resolved, err = s.resolvePasswords(saved.ID, saved.Profile)
+	if err != nil || resolved.VNCPassword != "new-vnc-password" {
+		t.Fatal("viewer save did not replace password")
+	}
+	if _, err := s.saveConnectionProfile("deleted", profile); err == nil {
+		t.Fatal("viewer save recreated a deleted connection")
+	}
+	if _, err := s.saveConnectionProfile("", profile); err == nil {
+		t.Fatal("viewer save created an unnamed connection")
 	}
 }

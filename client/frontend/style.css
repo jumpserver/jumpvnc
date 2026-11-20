@@ -59,19 +59,23 @@ button.danger:hover:enabled { background: #fff4f4; }
 .desktop { position: absolute; inset: 0; min-width: 0; min-height: 0; background: #101217; }
 #vnc-screen { position: absolute; inset: 0; }
 #connection-view { position: absolute; inset: 0; display: grid; justify-items: center; align-items: safe center; overflow: auto; padding: 30px; background: #f3f4f6; }
-#connect-form { width: min(100%, 440px); padding: 26px; border: 1px solid #e4e7ec; border-radius: 12px; background: #fff; box-shadow: 0 8px 28px #24314306; }
+#connection-dialog { width: min(480px, calc(100vw - 48px)); padding: 26px; }
+#connect-form { width: 100%; }
+.connection-state { max-width: 480px; padding: 28px; text-align: center; }
+.connection-state h2 { font-size: 18px; font-weight: 550; color: #626c79; }
+#state-endpoint { margin-top: 12px; color: #929aa6; overflow-wrap: anywhere; }
+#state-error { margin-top: 18px; line-height: 1.6; color: #ba5555; overflow-wrap: anywhere; }
+#state-actions { display: flex; justify-content: center; gap: 9px; margin-top: 22px; }
 #connect-form h2 { font-size: 19px; font-weight: 600; margin-bottom: 22px; }
 .fields { display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(0, 1fr); gap: 14px; }
-.fields.advanced { padding: 14px 0 2px; }
 .wide { grid-column: 1 / -1; }
 label { display: grid; gap: 7px; color: #747c87; }
 input:not([type="checkbox"]), select, textarea { width: 100%; min-width: 0; padding: 8px 9px; color: #39424f; background: #fff; border: 1px solid #dce1e7; border-radius: 5px; }
 input::placeholder { color: #a0a7b0; }
 .checkbox-row { display: flex; align-items: center; gap: 6px; margin-top: 14px; font-size: 11px; }
 input[type="checkbox"], progress { accent-color: var(--accent); }
-#advanced { margin-top: 16px; color: #747c87; }
 summary { cursor: pointer; }
-#connect { margin-top: 20px; width: 100%; padding: 10px 14px; }
+#connect { padding: 8px 14px; }
 #connect-error { margin-top: 14px; color: #ba5555; overflow-wrap: anywhere; line-height: 1.5; }
 
 .side-panel { position: absolute; z-index: 3; top: 0; right: 0; bottom: 0; width: min(350px, 100%); display: flex; flex-direction: column; min-height: 0; background: var(--panel); border-left: 1px solid #dfe3e9; box-shadow: -8px 0 28px #0000000c; }
@@ -99,6 +103,10 @@ summary { cursor: pointer; }
 .settings-footer { flex: none; padding: 16px 20px; border-top: 1px solid #edf0f3; text-align: center; }
 #breadcrumbs { flex: none; min-height: 30px; margin: 0 16px 12px; display: flex; align-items: center; overflow: auto; white-space: nowrap; color: #939ba6; }
 #breadcrumbs button { padding: 3px 4px; background: transparent; border: 0; max-width: 160px; overflow: hidden; text-overflow: ellipsis; font-size: 11px; }
+.file-location { flex: none; margin: 0 18px 12px; padding: 10px 11px; background: #f6f8fa; border: 1px solid #edf0f3; border-radius: 6px; }
+.file-location > span { display: block; font-size: 10px; color: #8e97a3; margin-bottom: 5px; }
+.file-location code { display: block; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; user-select: text; }
+.file-location p { margin-top: 5px; color: #87909d; font-size: 10px; line-height: 1.6; }
 .file-actions { flex: none; display: flex; align-items: center; gap: 7px; margin: 0 18px 16px; }
 .file-actions button { font-size: 11px; }
 .list-head, .file-row { display: grid; grid-template-columns: minmax(0, 1fr) 62px; align-items: center; gap: 7px; }
@@ -130,6 +138,7 @@ dialog h2 { font-size: 15px; font-weight: 600; margin-bottom: 16px; }
 #clipboard-dialog { width: min(470px, 90vw); }
 #clipboard-dialog p { color: #929ba7; font-size: 11px; line-height: 1.6; margin-bottom: 14px; }
 #clipboard-text { resize: vertical; line-height: 1.6; }
+#clipboard-status[data-error="true"] { color: #c43838; }
 @media (max-width: 1050px) {
   .tool-button > span { display: none; }
   .tool-button { width: 26px; padding: 3px; }
@@ -137,3 +146,9 @@ dialog h2 { font-size: 15px; font-weight: 600; margin-bottom: 16px; }
   .connection-metrics { gap: 8px; }
   #connection-name { max-width: 130px; }
 }
+
+#host-key-dialog p { margin: 14px 0; line-height: 1.6; color: #747c87; }
+#host-key-fingerprint { display: block; padding: 12px; border-radius: 6px; background: #f3f4f6; overflow-wrap: anywhere; font-size: 11px; }
+#credentials-dialog { width: min(400px, 90vw); }
+#credentials-dialog h2 { margin-bottom: 14px; }
+#credentials-message { margin-bottom: 18px; color: #747c87; line-height: 1.6; }

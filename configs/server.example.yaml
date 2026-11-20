@@ -1,5 +1,5 @@
 ssh:
-  listen: "0.0.0.0:2222"
+  listen: "0.0.0.0:5922"
   host_key_file: ssh_host_ed25519_key
   authorized_keys_file: authorized_keys
   user: vncuser
@@ -13,11 +13,14 @@ ssh:
 
 sftp:
   mode: read_write
-  root: exchange
+  root: "~" # Remote Agent user's HOME (also the default when omitted).
   max_file_size_mib: 1024
   max_handles_per_session: 64
 
 vnc:
+  compatibility:
+    enabled: false # Optional plain VNC Viewer access, without SSH encryption.
+    # listen: "0.0.0.0:5923" # Default when enabled: ssh.listen host and port + 1.
   engine: tigervnc
   listen: "127.0.0.1:5900"
   password_file: vnc.passwd

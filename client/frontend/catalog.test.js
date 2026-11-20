@@ -4,7 +4,7 @@ import { selectServers } from './catalog.js';
 
 const server = (id, name, folderId, favorite, createdAt, lastOpened, host) => ({
   id, name, folderId, favorite, createdAt, lastOpened,
-  profile: { host, user: 'desktop', port: 2222, vncPort: 5900, jump: 'bastion' },
+  profile: { host, user: 'desktop', port: 5922, vncPort: 5900, jump: 'bastion' },
 });
 const library = {
   folders: [{ id: 'work', name: '工作环境' }, { id: 'lab', name: '测试环境' }],

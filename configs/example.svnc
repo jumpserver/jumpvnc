@@ -1,0 +1,15 @@
+{
+  "format": "svnc",
+  "version": 1,
+  "connections": [
+    {
+      "name": "设计工作站",
+      "profile": {
+        "transport": "subsystem",
+        "host": "desktop.example.com",
+        "port": 5922,
+        "user": "vncuser"
+      }
+    }
+  ]
+}

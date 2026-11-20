@@ -56,6 +56,18 @@ func (s *Server) forward(ctx context.Context, incoming ssh.NewChannel, log *slog
 	go denyRequests(requests, done, log)
 
 	log.Info("ssh.forward", "result", "allowed")
+	s.relayVNC(ctx, channel, backend, log)
+}
+
+// desktopStream supports half-close for both SSH channels and TCP viewers.
+type desktopStream interface {
+	io.ReadWriteCloser
+	CloseWrite() error
+}
+
+func (s *Server) relayVNC(ctx context.Context, channel desktopStream, backend *net.TCPConn, log *slog.Logger) {
+	stop := context.AfterFunc(ctx, func() { backend.Close(); channel.Close() })
+	defer stop()
 	start := time.Now()
 	log.Info("vnc.session", "event", "start")
 	type transfer struct {

@@ -1,5 +1,5 @@
 {
-  "name": "SVNC",
+  "name": "SuperVNC",
   "slug": "sshvnc-desktop",
   "identifier": "com.sshvnc.desktop",
   "version": "0.1.0",
@@ -8,5 +8,13 @@
   "buildCommand": "npm --prefix frontend run build",
   "out": "build",
   "bindings": "frontend/generated.ts",
+  "fileAssociations": [
+    {
+      "ext": ["svnc"],
+      "name": "SuperVNC Connection",
+      "mimeType": "application/x-svnc",
+      "role": "Viewer"
+    }
+  ],
   "resources": ["frontend/node_modules/@novnc/novnc/LICENSE.txt"]
 }

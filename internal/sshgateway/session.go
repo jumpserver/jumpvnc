@@ -1,15 +1,17 @@
 package sshgateway
 
 import (
+	"context"
 	"log/slog"
+	"net"
 	"time"
 
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 )
 
-func (s *Server) session(incoming ssh.NewChannel, log *slog.Logger) {
-	if s.files == nil || len(incoming.ExtraData()) != 0 {
+func (s *Server) session(ctx context.Context, incoming ssh.NewChannel, log *slog.Logger) {
+	if (s.files == nil && !s.cfg.SSH.AllowVNC) || len(incoming.ExtraData()) != 0 {
 		incoming.Reject(ssh.Prohibited, "session not permitted")
 		log.Info("policy.denied", "reason", "session_policy")
 		return
@@ -31,7 +33,16 @@ func (s *Server) session(incoming ssh.NewChannel, log *slog.Logger) {
 				return
 			}
 			var subsystem struct{ Name string }
-			if req.Type != "subsystem" || ssh.Unmarshal(req.Payload, &subsystem) != nil || subsystem.Name != "sftp" {
+			if req.Type != "subsystem" || ssh.Unmarshal(req.Payload, &subsystem) != nil {
+				rejectRequest(req, log)
+				continue
+			}
+			if subsystem.Name == "vnc" && s.cfg.SSH.AllowVNC {
+				timer.Stop()
+				s.vncSubsystem(ctx, channel, requests, req, log.With("subsystem", "vnc"))
+				return
+			}
+			if subsystem.Name != "sftp" || s.files == nil {
 				rejectRequest(req, log)
 				continue
 			}
@@ -75,4 +86,23 @@ func rejectRequest(req *ssh.Request, log *slog.Logger) {
 		req.Reply(false, nil)
 	}
 	log.Info("policy.denied", "request", req.Type)
+}
+
+func (s *Server) vncSubsystem(ctx context.Context, channel ssh.Channel, requests <-chan *ssh.Request, req *ssh.Request, log *slog.Logger) {
+	dialer := net.Dialer{Timeout: 3 * time.Second}
+	conn, err := dialer.DialContext(ctx, "tcp4", s.cfg.VNC.Listen)
+	if err != nil {
+		rejectRequest(req, log)
+		log.Info("vnc.subsystem", "result", "failed", "reason", "backend_unavailable")
+		return
+	}
+	backend := conn.(*net.TCPConn)
+	defer backend.Close()
+	if req.WantReply && req.Reply(true, nil) != nil {
+		return
+	}
+	done := make(chan struct{})
+	defer close(done)
+	go denyRequests(requests, done, log)
+	s.relayVNC(ctx, channel, backend, log)
 }

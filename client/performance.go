@@ -2,7 +2,7 @@ package main
 
 import (
 	"errors"
-	"net"
+	"io"
 	"sync/atomic"
 	"time"
 )
@@ -42,7 +42,7 @@ func (s *session) performance(now time.Time) Performance {
 }
 
 type measuredConn struct {
-	net.Conn
+	Conn     io.ReadWriteCloser
 	received *atomic.Int64
 	sent     *atomic.Int64
 }
@@ -58,3 +58,5 @@ func (c *measuredConn) Write(p []byte) (int, error) {
 	c.sent.Add(int64(n))
 	return n, err
 }
+
+func (c *measuredConn) Close() error { return c.Conn.Close() }

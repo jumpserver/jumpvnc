@@ -1,5 +1,5 @@
 [Unit]
-Description=SVNC test desktop on a private Xvfb display
+Description=SuperVNC test desktop on a private Xvfb display
 After=network.target
 
 [Service]

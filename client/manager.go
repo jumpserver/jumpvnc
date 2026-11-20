@@ -10,14 +10,16 @@ import (
 )
 
 type Manager struct {
-	store  *libraryStore
-	viewer *Viewer
-	window *mygo.Window // Only accessed on the UI thread.
+	store          *libraryStore
+	viewer         *Viewer
+	window         *mygo.Window // Only accessed on the UI thread.
+	importsMu      sync.Mutex
+	pendingImports []string
 }
 
 func (m *Manager) showWindow() {
 	m.window = mygo.NewWindow(mygo.WindowOptions{
-		Title: "SVNC · 连接管理", URL: "/", Width: 1180, Height: 780,
+		Title: "SuperVNC · 连接管理", URL: "/", Width: 1180, Height: 780,
 		MinWidth: 880, MinHeight: 580,
 		TitleBarStyle: mygo.TitleBarHidden, TitleBarHeight: 48,
 		TrafficLightPosition: &mygo.Point{X: 18, Y: 17},
@@ -59,7 +61,7 @@ func (m *Manager) OpenServer(id string) error {
 		TitleBarStyle: mygo.TitleBarHidden, TitleBarHeight: 36,
 		TrafficLightPosition: &mygo.Point{X: 14, Y: 11},
 	})
-	state := &viewerWindow{desktop: &Desktop{}, server: server}
+	state := &viewerWindow{desktop: &Desktop{}, server: server, store: m.store}
 	m.viewer.mu.Lock()
 	m.viewer.windows[win.ID()] = state
 	m.viewer.mu.Unlock()
@@ -82,6 +84,7 @@ func (m *Manager) OpenServer(id string) error {
 type viewerWindow struct {
 	desktop *Desktop
 	server  Server
+	store   *libraryStore
 }
 
 // Viewer routes every desktop operation by the calling native window. Each
@@ -110,13 +113,45 @@ func (v *Viewer) Defaults(ctx context.Context) (Server, error) {
 	if err != nil {
 		return Server{}, err
 	}
-	return state.server, nil
+	lib, err := state.store.read()
+	if err != nil {
+		return Server{}, err
+	}
+	for _, server := range lib.Servers {
+		if server.ID == state.server.ID {
+			return server, nil
+		}
+	}
+	return Server{}, errors.New("连接已被删除，请刷新")
+}
+
+func (v *Viewer) SaveProfile(ctx context.Context, p Profile) (Server, error) {
+	state, err := v.caller(ctx)
+	if err != nil {
+		return Server{}, err
+	}
+	return state.store.saveConnectionProfile(state.server.ID, p)
 }
 
 func (v *Viewer) Connect(ctx context.Context, p Profile) (Connection, error) {
 	state, err := v.caller(ctx)
 	if err != nil {
 		return Connection{}, err
+	}
+	wantedPassword, wantedSSH := p.StoredPassword, p.StoredSSHPassword
+	p, err = state.store.resolvePasswords(state.server.ID, p)
+	if err != nil {
+		return Connection{}, err
+	}
+	var missing []string
+	if wantedPassword && !p.StoredPassword && p.VNCPassword == "" {
+		missing = append(missing, "vncPassword")
+	}
+	if wantedSSH && !p.StoredSSHPassword && p.SSHPassword == "" {
+		missing = append(missing, "sshPassword")
+	}
+	if len(missing) != 0 {
+		return Connection{Auth: &AuthChallenge{Fields: missing, Message: "未找到保存的密码，请重新填写"}}, nil
 	}
 	connection, err := state.desktop.Connect(p)
 	if _, closed := v.caller(ctx); closed != nil {

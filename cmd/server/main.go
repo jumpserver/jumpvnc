@@ -17,12 +17,16 @@ import (
 )
 
 func main() {
+	flag.Usage = func() {
+		fmt.Fprintf(flag.CommandLine.Output(), "SuperVNC Server — SVNC desktop and SFTP gateway\n\nUsage: %s [options]\n", os.Args[0])
+		flag.PrintDefaults()
+	}
 	name := flag.String("config", "config.yaml", "path to the YAML configuration")
 	flag.Parse()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	log := slog.New(slog.NewJSONHandler(os.Stderr, nil)).With("product", "SuperVNC Server")
 	if err := run(ctx, *name, log); err != nil && ctx.Err() == nil {
 		log.Error("agent.error", "error", err)
 		os.Exit(1)
@@ -44,12 +48,7 @@ func run(ctx context.Context, name string, log *slog.Logger) error {
 	}
 	defer gateway.Close()
 
-	network := "tcp"
-	host, _, _ := net.SplitHostPort(cfg.SSH.Listen)
-	if ip := net.ParseIP(host); ip.To4() != nil {
-		network = "tcp4"
-	}
-	listener, err := net.Listen(network, cfg.SSH.Listen)
+	listener, err := listenTCP(cfg.SSH.Listen)
 	if err != nil {
 		return fmt.Errorf("listen for SSH: %w", err)
 	}
@@ -66,20 +65,47 @@ func run(ctx context.Context, name string, log *slog.Logger) error {
 		}
 		defer stop()
 	}
-	return serve(ctx, cancel, listener, gateway, exited, cfg, log)
+	var compatibility net.Listener
+	if cfg.VNC.Compatibility.Enabled {
+		compatibility, err = listenTCP(cfg.VNC.Compatibility.Listen)
+		if err != nil {
+			return fmt.Errorf("listen for VNC compatibility: %w", err)
+		}
+		defer compatibility.Close()
+	}
+	return serve(ctx, cancel, listener, compatibility, gateway, exited, cfg, log)
 }
 
-func serve(ctx context.Context, cancel context.CancelFunc, listener net.Listener, gateway *sshgateway.Server, exited <-chan error, cfg config.Config, log *slog.Logger) error {
-	served := make(chan error, 1)
+func serve(ctx context.Context, cancel context.CancelFunc, listener, compatibility net.Listener, gateway *sshgateway.Server, exited <-chan error, cfg config.Config, log *slog.Logger) error {
+	served := make(chan error, 2)
+	remaining := 1
 	go func() { served <- gateway.Serve(ctx, listener) }()
+	if compatibility != nil {
+		remaining++
+		go func() { served <- gateway.ServeVNC(ctx, compatibility) }()
+		log.Info("vnc.compatibility.ready", "listen", compatibility.Addr().String(), "authentication", "backend_vnc", "ssh_encrypted", false)
+	}
 	log.Info("ssh.ready", "listen", listener.Addr().String(), "host_key", gateway.HostFingerprint(),
 		"allow_vnc", cfg.SSH.AllowVNC, "sftp_mode", cfg.SFTP.Mode)
+	var result error
 	select {
-	case err := <-served:
-		return err
+	case result = <-served:
+		remaining--
 	case err := <-exited:
-		cancel()
-		<-served
-		return vnc.ExitError(cfg.VNC.Engine, err)
+		result = vnc.ExitError(cfg.VNC.Engine, err)
 	}
+	cancel()
+	for range remaining {
+		<-served
+	}
+	return result
+}
+
+func listenTCP(address string) (net.Listener, error) {
+	network := "tcp"
+	host, _, _ := net.SplitHostPort(address)
+	if ip := net.ParseIP(host); ip.To4() != nil {
+		network = "tcp4"
+	}
+	return net.Listen(network, address)
 }

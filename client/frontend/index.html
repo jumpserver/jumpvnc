@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'">
-  <title>SVNC · 连接管理</title>
+  <title>SuperVNC · 连接管理</title>
   <link rel="stylesheet" href="./manager.css">
 </head>
 <body>
@@ -26,6 +26,7 @@
     <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
     <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
     <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m8 10 4 4 4-4"/></symbol>
+    <symbol id="i-import" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 16v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/></symbol>
   </defs></svg>
   <button id="sidebar-toggle" class="icon-button sidebar-toggle" type="button" title="收起侧栏" aria-label="收起侧栏" aria-controls="connection-sidebar" aria-expanded="true"><svg class="icon"><use href="#i-sidebar"/></svg></button>
   <aside id="connection-sidebar" class="sidebar" aria-label="连接分类">
@@ -52,6 +53,7 @@
         <label class="sort-control" title="排序"><svg class="icon"><use href="#i-sort"/></svg><select id="sort" aria-label="连接排序"><option value="name">名称排序</option><option value="recent">最近打开</option><option value="created">最近添加</option></select></label>
         <button id="layout" class="icon-button" title="切换为列表视图" aria-label="切换为列表视图" aria-pressed="false"><svg class="icon"><use href="#i-list"/></svg></button>
         <span class="toolbar-divider"></span>
+        <button id="import-connections" class="icon-button" type="button" title="导入 .svnc 连接" aria-label="导入 .svnc 连接"><svg class="icon"><use href="#i-import"/></svg></button>
         <button id="add-server" class="icon-button" type="button" title="添加连接" aria-label="添加连接"><svg class="icon"><use href="#i-plus"/></svg></button>
       </div>
     </header>
@@ -67,21 +69,25 @@
     <form id="server-form">
       <div class="dialog-heading"><div><h2 id="server-dialog-title">添加连接</h2><p>保存服务器信息，在独立窗口中打开远程桌面。</p></div><button type="button" class="icon-button dialog-close" aria-label="关闭"><svg class="icon"><use href="#i-close"/></svg></button></div>
       <div class="fields">
+        <label class="wide">协议<select name="protocol"><option value="svnc">SVNC</option><option value="vnc">VNC</option></select></label>
         <label>连接名称<input name="name" required maxlength="100" placeholder="例如：设计工作站" autocomplete="off"></label>
         <label>所属分类<select name="folderId"></select></label>
-        <label class="host-field">Agent 主机<input name="host" required placeholder="IP 地址或主机名" autocomplete="off"></label>
-        <label>SSH 端口<input name="port" type="number" min="1" max="65535" required></label>
-        <label>SSH 用户名<input name="user" required autocomplete="off"></label>
-        <label>VNC 端口<input name="vncPort" type="number" min="1" max="65535" required></label>
+        <label>服务器地址<input name="host" required placeholder="IP 地址或主机名" autocomplete="off"></label>
+        <label>端口<input name="port" type="number" min="1" max="65535" placeholder="5922"></label>
+        <label class="wide" data-user>用户名<input name="user" placeholder="vncuser" autocomplete="off"></label>
+        <label class="wide">VNC 密码<input name="vncPassword" type="password" autocomplete="new-password" placeholder="可选，连接时填写"></label>
+        <label class="checkbox-row wide"><input name="storedPassword" type="checkbox" checked>保存 VNC 密码</label>
+        <label class="checkbox-row wide" data-vnc hidden><input name="sshTunnel" type="checkbox">使用 SSH 隧道</label>
+        <label data-ssh-tunnel hidden>SSH 服务器<input name="sshHost" autocomplete="off" disabled></label>
+        <label data-ssh-tunnel hidden>SSH 端口<input name="sshPort" type="number" min="1" max="65535" value="22" disabled></label>
+        <label class="wide" data-ssh-tunnel hidden>SSH 用户名<input name="sshUser" autocomplete="off" disabled></label>
+        <label class="wide" data-ssh-tunnel hidden>SSH 密码<input name="sshPassword" type="password" autocomplete="new-password" placeholder="可选，也可使用本机身份"></label>
+        <label class="checkbox-row wide" data-ssh-tunnel hidden><input name="storedSSHPassword" type="checkbox" checked>保存 SSH 密码</label>
+        <label class="wide" data-ssh-tunnel hidden>SSH 跳板机<input name="jump" placeholder="可选" autocomplete="off"></label>
+        <label class="wide" data-ssh-tunnel hidden>SSH 私钥<input name="identity" placeholder="可选，默认使用本机身份" autocomplete="off"></label>
       </div>
-      <details id="server-advanced"><summary>SSH 认证与跳板机</summary><div class="fields advanced-fields">
-        <label class="wide">SSH 私钥路径<input name="identity" required placeholder="~/.ssh/id_ed25519" autocomplete="off"></label>
-        <label class="wide">known_hosts 路径<input name="knownHosts" required placeholder="~/.ssh/known_hosts" autocomplete="off"></label>
-        <label>SSH 跳板机<input name="jump" placeholder="可选，例如 bastion" autocomplete="off"></label>
-        <label>主机密钥别名<input name="hostKeyAlias" placeholder="可选" autocomplete="off"></label>
-      </div></details>
-      <label id="stored-password-row" class="checkbox-row" hidden><input name="storedPassword" type="checkbox">使用本机预配置的 g15 VNC 密码</label>
-      <p class="form-note"><svg class="icon"><use href="#i-lock"/></svg>VNC 密码在连接时输入，不写入连接配置。</p>
+      <input name="transport" type="hidden"><input name="knownHosts" type="hidden"><input name="hostKeyAlias" type="hidden"><input name="vncUsername" type="hidden">
+      <p class="form-note"><svg class="icon"><use href="#i-lock"/></svg>账号、密码可留空，连接时补填。</p>
       <p id="server-error" class="form-error" role="alert" hidden></p>
       <div class="dialog-buttons"><button type="button" class="dialog-close">取消</button><button id="save-server" class="primary" type="submit">保存连接</button></div>
     </form>

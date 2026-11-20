@@ -1,4 +1,4 @@
-# SVNC Linux X11 桌面后端
+# SuperVNC Server Linux X11 桌面后端
 
 `svnc-desktop` 使用 LibVNCServer 编码和提供 RFB 服务，Xlib 读取当前 X11 桌面，XTEST 注入键鼠，XFIXES 获取光标和剪贴板变化。Go Agent 仍负责 SSH、公钥授权、审计、SFTP 和后端生命周期。
 
@@ -10,7 +10,7 @@
 sudo apt-get install build-essential cmake pkg-config libvncserver-dev libx11-dev libxtst-dev libxfixes-dev
 cmake -S desktop/linux -B /tmp/svnc-linux-build -DCMAKE_BUILD_TYPE=Release
 cmake --build /tmp/svnc-linux-build -j
-cmake --install /tmp/svnc-linux-build --prefix "$PWD/state"
+sudo cmake --install /tmp/svnc-linux-build --prefix /opt/svnc
 go build -o bin/sshvnc ./cmd/server
 ```
 
@@ -18,15 +18,17 @@ go build -o bin/sshvnc ./cmd/server
 
 ```sh
 umask 077
-mkdir -p state/exchange
-cp configs/linux.example.yaml state/config.yaml
-ssh-keygen -t ed25519 -N '' -f state/ssh_host_ed25519_key
-cp /path/to/client.pub state/authorized_keys
-printf 'changeMe\n' > state/vnc-password.txt
-./bin/sshvnc -config state/config.yaml
+state=/var/lib/sshvnc/$USER
+sudo install -d -m 700 -o "$USER" "$state"
+cp configs/linux.example.yaml "$state/config.yaml"
+# 将配置中的 vnc.executable 设置为 /opt/svnc/backends/linux/svnc-desktop。
+ssh-keygen -t ed25519 -N '' -f "$state/ssh_host_ed25519_key"
+cp /path/to/client.pub "$state/authorized_keys"
+printf 'changeMe\n' > "$state/vnc-password.txt"
+./bin/sshvnc -config "$state/config.yaml"
 ```
 
-示例密码必须换成自己的密码。后端密码文件是 1–8 字节可打印 ASCII 明文，可带一个结尾换行；与 TigerVNC 的 `vncpasswd` 文件不同。文件需为普通文件且组/其他用户无权限，后端拒绝符号链接。配置路径相对于 YAML 文件所在目录。
+示例密码必须换成自己的密码。后端密码文件是 1–8 字节可打印 ASCII 明文，可带一个结尾换行；与 TigerVNC 的 `vncpasswd` 文件不同。文件需为普通文件且组/其他用户无权限，后端拒绝符号链接。配置路径相对于 YAML 文件所在目录。SFTP 默认访问运行账户的 HOME，配置、凭据和后端程序须在 HOME 外；旧交换目录中的文件保留在原位置。
 
 以已登录桌面的普通用户运行，继承 `DISPLAY` 和 `XAUTHORITY`。可以沿用 [systemd 用户服务](../../deployments/sshvnc.service)，从桌面终端导入环境后启动。仅监听 `127.0.0.1`，远程客户端仍通过 SSH 隧道接入；文件传输仅走专用 SFTP 目录。分发采用动态链接，目标系统需要相应的 LibVNCServer 和 X11 运行库。
 
@@ -45,7 +47,7 @@ printf 'changeMe\n' > state/vnc-password.txt
 
 ## 验证
 
-隔离环境安装 `xvfb xterm xdotool xauth xclip tigervnc-tools tigervnc-viewer openssh-client iproute2 xfonts-base`。以非 root 用户运行，确保测试端口 2222、5900、15900 空闲：
+隔离环境安装 `xvfb xterm xdotool xauth xclip tigervnc-tools tigervnc-viewer openssh-client iproute2 xfonts-base`。以非 root 用户运行，确保测试端口 5922、5900、15900 空闲：
 
 ```sh
 bash tests/integration/libvncserver.sh bin/sshvnc /tmp/svnc-linux-build/svnc-desktop

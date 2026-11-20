@@ -8,6 +8,7 @@ import (
 	"log"
 	"path"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/egoist/mygo"
@@ -24,15 +25,19 @@ type Desktop struct {
 }
 
 type Connection struct {
-	ID       string `json:"id"`
-	URL      string `json:"url"`
-	Password string `json:"password,omitempty"`
-	Files    bool   `json:"files"`
+	Auth         *AuthChallenge    `json:"auth,omitempty"`
+	HostKey      *HostKeyChallenge `json:"hostKey,omitempty"`
+	ID           string            `json:"id"`
+	URL          string            `json:"url"`
+	Password     string            `json:"password,omitempty"`
+	Files        bool              `json:"files"`
+	FileLocation *FileLocation     `json:"fileLocation,omitempty"`
 }
 
 func (*Desktop) Defaults() Profile { return defaultProfile() }
 
 func (d *Desktop) Connect(p Profile) (Connection, error) {
+	p = p.withDefaults()
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.current != nil && d.current.ctx.Err() == nil {
@@ -44,10 +49,21 @@ func (d *Desktop) Connect(p Profile) (Connection, error) {
 	}
 	s, url, err := openSession(p)
 	if err != nil {
+		var auth *AuthChallenge
+		if errors.As(err, &auth) {
+			return Connection{Auth: auth}, nil
+		}
+		if p.Transport == "forward" && strings.Contains(err.Error(), "unable to authenticate") {
+			return Connection{Auth: &AuthChallenge{Fields: []string{"user", "sshPassword"}, Message: "SSH 认证失败，请填写账号和密码"}}, nil
+		}
+		var challenge *HostKeyChallenge
+		if errors.As(err, &challenge) {
+			return Connection{HostKey: challenge}, nil
+		}
 		return Connection{}, err
 	}
 	d.current = s
-	return Connection{ID: s.id, URL: url, Password: password, Files: s.files != nil}, nil
+	return Connection{ID: s.id, URL: url, Password: password, Files: s.files != nil, FileLocation: s.fileLocation}, nil
 }
 
 func (d *Desktop) Disconnect() {
@@ -165,16 +181,21 @@ func (d *Desktop) fileSession() (*session, error) {
 
 func main() {
 	mygo.Theme.SetSource(mygo.ThemeLight)
-	// Keep connection profiles and window state across the SVNC display rename.
+	// Keep connection profiles and window state across the SuperVNC display rename.
 	dataDir, err := mygo.App.Path(mygo.PathAppData)
 	if err != nil {
 		log.Fatal(err)
 	}
 	mygo.App.SetPath(mygo.PathUserData, filepath.Join(dataDir, "SSH VNC"))
+	if !mygo.App.RequestSingleInstanceLock() {
+		return
+	}
 	viewer := &Viewer{windows: make(map[int]*viewerWindow)}
 	manager := &Manager{viewer: viewer}
 	mygo.Bind(manager)
 	mygo.Bind(viewer)
+	mygo.App.OnOpenFile(manager.queueImport)
+	mygo.App.OnSecondInstance(func(_ []string, _ string) { mygo.App.WhenReady(manager.activateWindow) })
 	mygo.App.OnActivate(func(_ bool) {
 		if manager.store != nil && (manager.window == nil || manager.window.IsDestroyed()) {
 			manager.showWindow()

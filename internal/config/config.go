@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -42,28 +43,35 @@ type SFTP struct {
 	Root           string `yaml:"root"`
 	MaxFileSizeMiB int64  `yaml:"max_file_size_mib"`
 	MaxHandles     int    `yaml:"max_handles_per_session"`
+	Home           bool   `yaml:"-"`
+}
+
+type VNCCompatibility struct {
+	Enabled bool   `yaml:"enabled"`
+	Listen  string `yaml:"listen"`
 }
 
 type VNC struct {
-	Engine                string `yaml:"engine"`
-	Listen                string `yaml:"listen"`
-	Executable            string `yaml:"executable"`
-	PasswordFile          string `yaml:"password_file"`
-	ViewOnly              bool   `yaml:"view_only"`
-	StartupTimeoutSeconds int    `yaml:"startup_timeout_seconds"`
+	Compatibility         VNCCompatibility `yaml:"compatibility"`
+	Engine                string           `yaml:"engine"`
+	Listen                string           `yaml:"listen"`
+	Executable            string           `yaml:"executable"`
+	PasswordFile          string           `yaml:"password_file"`
+	ViewOnly              bool             `yaml:"view_only"`
+	StartupTimeoutSeconds int              `yaml:"startup_timeout_seconds"`
 }
 
 func Load(name string) (Config, error) {
 	cfg := Config{
 		Audit: true,
 		SSH: SSH{
-			Listen: "0.0.0.0:2222",
+			Listen: "0.0.0.0:5922",
 			Limits: Limits{
 				MaxConnections: 32, MaxChannelsPerConnection: 8, HandshakesPerMinutePerIP: 30,
 				HandshakeTimeoutSeconds: 10, IdleTimeoutSeconds: 1800,
 			},
 		},
-		SFTP: SFTP{Mode: "disabled", MaxFileSizeMiB: 1024, MaxHandles: 64},
+		SFTP: SFTP{Mode: "disabled", Root: "~", MaxFileSizeMiB: 1024, MaxHandles: 64},
 		VNC:  VNC{Engine: "external", Listen: "127.0.0.1:5900", StartupTimeoutSeconds: 15},
 	}
 
@@ -87,11 +95,27 @@ func Load(name string) (Config, error) {
 		return Config{}, errors.New("expected a single YAML document")
 	}
 
+	if cfg.VNC.Compatibility.Enabled && cfg.VNC.Compatibility.Listen == "" {
+		host, port, err := net.SplitHostPort(cfg.SSH.Listen)
+		number, portErr := strconv.Atoi(port)
+		if err != nil || portErr != nil || number < 1 || number >= 65535 {
+			return Config{}, errors.New("automatic VNC compatibility port requires an SSH port between 1 and 65534")
+		}
+		cfg.VNC.Compatibility.Listen = net.JoinHostPort(host, strconv.Itoa(number+1))
+	}
+
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
 	}
 
 	dir := filepath.Dir(name)
+	if cfg.SFTP.Mode != "disabled" && (cfg.SFTP.Root == "" || cfg.SFTP.Root == "~") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return Config{}, fmt.Errorf("SFTP home directory: %w", err)
+		}
+		cfg.SFTP.Root = home
+	}
 	for _, value := range []*string{&cfg.SSH.HostKeyFile, &cfg.SSH.AuthorizedKeysFile, &cfg.SFTP.Root, &cfg.VNC.PasswordFile} {
 		if *value != "" && !filepath.IsAbs(*value) {
 			*value = filepath.Join(dir, *value)
@@ -134,8 +158,20 @@ func Load(name string) (Config, error) {
 			}
 		}
 		cfg.SFTP.Root = root
+		if home, err := os.UserHomeDir(); err == nil {
+			if resolved, err := filepath.EvalSymlinks(home); err == nil {
+				cfg.SFTP.Home = samePath(root, resolved)
+			}
+		}
 	}
 	return cfg, nil
+}
+
+func samePath(a, b string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
+	}
+	return filepath.Clean(a) == filepath.Clean(b)
 }
 
 func (c Config) validate() error {
@@ -156,8 +192,8 @@ func (c Config) validate() error {
 	default:
 		return errors.New("sftp.mode must be disabled, read_only, write_only or read_write")
 	}
-	if c.SFTP.Mode != "disabled" && (c.SFTP.Root == "" || c.SFTP.MaxFileSizeMiB < 1 || c.SFTP.MaxFileSizeMiB > 1048576 || c.SFTP.MaxHandles < 1 || c.SFTP.MaxHandles > 256) {
-		return errors.New("SFTP needs a root, max_file_size_mib between 1 and 1048576, and max_handles_per_session between 1 and 256")
+	if c.SFTP.Mode != "disabled" && (c.SFTP.MaxFileSizeMiB < 1 || c.SFTP.MaxFileSizeMiB > 1048576 || c.SFTP.MaxHandles < 1 || c.SFTP.MaxHandles > 256) {
+		return errors.New("SFTP needs max_file_size_mib between 1 and 1048576, and max_handles_per_session between 1 and 256")
 	}
 	if !c.SSH.AllowVNC && c.SFTP.Mode == "disabled" {
 		return errors.New("enable at least one of SSH desktop forwarding and SFTP")
@@ -166,6 +202,20 @@ func (c Config) validate() error {
 	number, portErr := strconv.Atoi(port)
 	if err != nil || host != "127.0.0.1" || portErr != nil || number < 1 || number > 65535 || strconv.Itoa(number) != port {
 		return errors.New("vnc.listen must be 127.0.0.1 with a numeric TCP port")
+	}
+	if compat := c.VNC.Compatibility; compat.Enabled {
+		if !c.SSH.AllowVNC {
+			return errors.New("VNC compatibility requires ssh.allow_vnc")
+		}
+		_, compatPort, err := net.SplitHostPort(compat.Listen)
+		compatNumber, portErr := strconv.Atoi(compatPort)
+		_, sshPort, _ := net.SplitHostPort(c.SSH.Listen)
+		if err != nil || portErr != nil || compatNumber < 1 || compatNumber > 65535 || strconv.Itoa(compatNumber) != compatPort {
+			return errors.New("vnc.compatibility.listen must have a numeric TCP port between 1 and 65535")
+		}
+		if compatPort == sshPort || compatPort == port {
+			return errors.New("VNC compatibility port must differ from the SSH and backend ports")
+		}
 	}
 	if c.VNC.StartupTimeoutSeconds < 1 || c.VNC.StartupTimeoutSeconds > 120 {
 		return errors.New("vnc.startup_timeout_seconds must be between 1 and 120")

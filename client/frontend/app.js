@@ -1,7 +1,11 @@
+import { syncTransport, setProfile, profileFromForm, desktopEndpoint } from './transport.js';
+import { missingCredentials, promptCredentials, cancelCredentials, profileToSave } from './auth.js';
 import RFB from '@novnc/novnc';
 import { applyQuality, NetworkWindow, qualityProfiles } from './performance.js';
 import { measureRFB } from './rfb-performance.js';
 import { nativeRFB } from './native-rfb.js';
+import { fileLocationPath, fileLocationNote } from './file-location.js';
+import { clipboardSync } from './clipboard.js';
 
 const MeasuredRFB = measureRFB(nativeRFB(RFB));
 
@@ -16,7 +20,11 @@ let connected = false;
 let filesAvailable = false;
 let connecting = false;
 let disconnecting = false;
+let profileReady = false;
+let savingConnection = false;
+let editingSnapshot;
 let directory = '/';
+let fileLocation;
 let entries = [];
 let selection;
 let listRequest = 0;
@@ -27,6 +35,43 @@ let pendingDrop;
 let stopPerformance;
 let activePanel = null;
 let serverName = '';
+let clipboard;
+let clipboardTimer;
+
+function clipboardStatus(message, failed = false) {
+  $('clipboard-status').textContent = message;
+  $('clipboard-status').dataset.error = String(failed);
+  $('clipboard-toggle').title = '文本剪贴板自动同步 · ' + message;
+}
+
+function clipboardError(error) { clipboardStatus(errorMessage(error), true); }
+
+function stopClipboard() {
+  clearTimeout(clipboardTimer);
+  clipboard?.stop();
+  clipboard = undefined;
+}
+
+function startClipboard(rfb, id) {
+  stopClipboard();
+  const sync = clipboard = clipboardSync({
+    read: () => call('ReadClipboard', id),
+    write: text => call('WriteClipboard', id, text),
+    send: text => rfb.clipboardPasteFrom(text),
+    changed: text => { $('clipboard-text').value = text; },
+    report: clipboardStatus,
+  });
+  rfb.commandAsControl = /Mac|iPhone|iPad/.test(navigator.platform);
+  rfb.beforePaste = () => sync.sync(true);
+  rfb.onClipboardError = clipboardError;
+  async function tick() {
+    if (clipboard !== sync) return;
+    try { await sync.sync(); } catch (error) { if (clipboard === sync) clipboardError(error); }
+    if (clipboard === sync) clipboardTimer = setTimeout(tick, 250);
+  }
+  clipboardStatus('自动同步已开启');
+  tick();
+}
 
 function showPanel(name) {
   activePanel = name;
@@ -119,11 +164,14 @@ function status(message, state = '') {
   $('connection-status').textContent = message;
   $('status-indicator').dataset.state = state;
   $('status-indicator').title = message;
+  $('state-title').textContent = message;
 }
 
 function showConnectionError(message) {
   $('connect-error').textContent = message;
   $('connect-error').hidden = !message;
+  $('state-error').textContent = message;
+  $('state-error').hidden = !message;
 }
 
 function errorMessage(error) {
@@ -131,8 +179,9 @@ function errorMessage(error) {
 }
 
 function syncControls() {
-  $('connect').disabled = connecting || disconnecting;
+  $('connect').disabled = !profileReady || savingConnection || connecting || connected || disconnecting;
   $('connect').textContent = connecting ? '连接中…' : '连接';
+  $('state-actions').hidden = !profileReady || savingConnection || connecting || connected || disconnecting;
   $('disconnect').hidden = !connected && !connecting;
   $('disconnect').disabled = disconnecting;
   $('refresh').disabled = !connected || !filesAvailable;
@@ -159,51 +208,115 @@ function showFilesOffline() {
   selection = undefined;
   listRequest++;
   $('breadcrumbs').textContent = '/';
+  fileLocation = undefined;
+  $('file-location').hidden = true;
   listMessage('连接后显示远程文件');
   $('transfer-area').hidden = true;
   syncControls();
 }
 
 function connectOptions() {
-  const p = Object.fromEntries(new FormData(form));
-  return {
-    ...p,
-    host: p.host.trim(), user: p.user.trim(), jump: p.jump.trim(),
-    port: Number(p.port), vncPort: Number(p.vncPort),
-    storedPassword: form.elements.storedPassword.checked,
-  };
+  return profileFromForm(form);
+}
+
+async function saveProfile(profile) {
+  const server = await call('SaveProfile', profileToSave(profile));
+  serverName = server.name;
+  $('connection-name').textContent = serverName;
+  setProfile(form, server.profile);
+  $('stored-row').hidden = !server.profile.storedPassword;
+  $('state-endpoint').textContent = desktopEndpoint(server.profile);
+  return server;
+}
+
+function showConnectionForm() {
+  showConnectionError('');
+  editingSnapshot = connectOptions();
+  syncControls();
+  $('connection-dialog').showModal();
+}
+
+function cancelConnectionForm() {
+  if (editingSnapshot) setProfile(form, editingSnapshot);
+  editingSnapshot = undefined;
+  $('connection-dialog').close();
+}
+
+function updateCredentialFields(profile) {
+  const user = profile.transport === 'forward' ? form.elements.sshUser : form.elements.user;
+  user.value = profile.user;
+  form.elements.vncPassword.value = profile.vncPassword || '';
+  form.elements.sshPassword.value = profile.sshPassword || '';
+  form.elements.vncUsername.value = profile.vncUsername || '';
+  form.elements.storedPassword.checked = profile.storedPassword;
+  form.elements.storedSSHPassword.checked = profile.storedSSHPassword;
 }
 
 async function connect(event) {
-  event.preventDefault();
-  if (connecting || connected || disconnecting) return;
-  showConnectionError('');
-  const profile = connectOptions();
-  if (!profile.storedPassword && !profile.vncPassword) {
-    showConnectionError('请输入 VNC 密码');
-    form.elements.vncPassword.focus();
+  event?.preventDefault();
+  if (!profileReady || savingConnection || connecting || connected || disconnecting) return;
+  if (!form.checkValidity()) {
+    status('需要补充连接信息');
+    if (!$('connection-dialog').open) showConnectionForm();
+    form.reportValidity();
     return;
   }
+  if ($('connection-dialog').open) {
+    editingSnapshot = undefined;
+    $('connection-dialog').close();
+  }
+  showConnectionError('');
+  const profile = connectOptions();
   connecting = true;
   showPanel(null);
   $('connection-name').textContent = serverName || profile.jump || profile.host;
   syncControls();
-  status('正在连接 SSH', 'connecting');
+  status(profile.transport === 'subsystem' ? '正在连接 SVNC' : '正在连接 VNC', 'connecting');
   try {
-    const connection = await call('Connect', profile);
+    const missing = missingCredentials(profile);
+    if (missing.length) {
+      if (!await promptCredentials(profile, missing, '', saveProfile)) { await disconnect(); return; }
+      updateCredentialFields(profile);
+    }
+    let connection;
+    while (connecting && !disconnecting) {
+      connection = await call('Connect', profile);
+      if (disconnecting || !connecting) return;
+      if (connection.auth) {
+        if (!await promptCredentials(profile, connection.auth.fields, connection.auth.message, saveProfile)) { await disconnect(); return; }
+        updateCredentialFields(profile);
+        continue;
+      }
+      if (!connection.hostKey) break;
+      const identity = connection.hostKey;
+      if (profile.trustHostKey) throw new Error('服务器身份发生变化，请重新连接并核对指纹');
+      $('host-key-host').textContent = identity.host;
+      $('host-key-fingerprint').textContent = `${identity.algorithm} · ${identity.fingerprint}`;
+      const dialog = $('host-key-dialog');
+      dialog.returnValue = '';
+      const accepted = new Promise(resolve => dialog.addEventListener('close', () => resolve(dialog.returnValue === 'trust'), { once: true }));
+      dialog.showModal();
+      if (!await accepted || disconnecting || !connecting) {
+        if (connecting) await disconnect();
+        return;
+      }
+      profile.trustHostKey = identity.fingerprint;
+    }
     if (disconnecting || !connecting) return;
     filesAvailable = connection.files;
+    fileLocation = connection.fileLocation;
+    updateFileLocation();
     status('正在连接桌面', 'connecting');
     $('vnc-screen').hidden = false;
     const rfb = new MeasuredRFB($('vnc-screen'), connection.url, {
       shared: true,
-      credentials: { password: connection.password },
+      credentials: connection.password ? { username: profile.vncUsername, password: connection.password } : {},
     });
     client = rfb;
     let desktopName = '';
     const updateEndpoint = () => {
       if (client !== rfb) return;
-      const endpoint = `${profile.user}@${profile.host} · SSH ${profile.port} → VNC ${profile.vncPort}`;
+      const endpoint = desktopEndpoint(profile);
       $('desktop-host').title = `${profile.jump ? profile.jump + ' · ' : ''}${endpoint}${desktopName ? ' · ' + desktopName : ''}`;
       $('connection-endpoint').textContent = `${profile.jump ? profile.jump + ' → ' : ''}${endpoint}`;
       $('connection-backend').textContent = desktopName || '等待服务端桌面名称';
@@ -215,7 +328,12 @@ async function connect(event) {
     applyQuality(rfb, $('quality-profile').value);
     rfb.scaleViewport = true;
     rfb.addEventListener('clipboard', ({ detail }) => {
-      if (client === rfb) $('clipboard-text').value = detail.text;
+      if (client !== rfb) return;
+      if (clipboard) clipboard.receive(detail.text).catch(clipboardError);
+      else $('clipboard-text').value = detail.text;
+    });
+    rfb.addEventListener('clipboardcapabilities', () => {
+      if (client === rfb) clipboard?.sync(true).catch(clipboardError);
     });
     rfb.addEventListener('connect', () => {
       if (client !== rfb) return;
@@ -225,17 +343,33 @@ async function connect(event) {
       updateEndpoint();
       $('connection-view').hidden = true;
       form.elements.vncPassword.value = '';
+      form.elements.sshPassword.value = '';
       status('已连接', 'connected');
       rfb.focus();
       syncControls();
-      listMessage(filesAvailable ? '打开文件管理后显示交换目录' : '文件传输不可用，桌面仍可正常使用');
+      listMessage(filesAvailable ? '打开文件管理后显示远程文件' : '文件传输不可用，桌面仍可正常使用');
       startPerformance(rfb, connection.id);
+      startClipboard(rfb, connection.id);
     });
     rfb.addEventListener('securityfailure', () => {
-      if (client === rfb) disconnect('VNC 认证失败，请检查 VNC 密码');
+      if (client === rfb) {
+        form.elements.vncPassword.value = '';
+        form.elements.storedPassword.checked = false;
+        disconnect('VNC 认证失败，请重新填写密码');
+      }
     });
-    rfb.addEventListener('credentialsrequired', () => {
-      if (client === rfb) disconnect('VNC 要求认证，请检查配置和 VNC 密码');
+    rfb.addEventListener('credentialsrequired', async ({ detail }) => {
+      if (client !== rfb) return;
+      const fields = detail.types.map(type => ({ username: 'vncUsername', password: 'vncPassword' })[type]).filter(Boolean);
+      if (!fields.length) { await disconnect('服务器要求的认证方式暂不支持'); return; }
+      const accepted = await promptCredentials(profile, fields, '', saveProfile);
+      if (client !== rfb) return;
+      if (!accepted) { await disconnect(); return; }
+      updateCredentialFields(profile);
+      const credentials = {};
+      if (fields.includes('vncUsername')) credentials.username = profile.vncUsername;
+      if (fields.includes('vncPassword')) credentials.password = profile.vncPassword;
+      rfb.sendCredentials(credentials);
     });
     rfb.addEventListener('disconnect', (event) => {
       if (client !== rfb) return;
@@ -257,7 +391,10 @@ async function disconnect(message = '') {
   showPanel(null);
   $('connection-metrics').hidden = true;
   resetPerformance();
+  stopClipboard();
   pendingDrop = undefined;
+  cancelCredentials();
+  if ($('host-key-dialog').open) $('host-key-dialog').close();
   if ($('drop-dialog').open) $('drop-dialog').close();
   if ($('clipboard-dialog').open) $('clipboard-dialog').close();
   $('clipboard-text').value = '';
@@ -294,12 +431,18 @@ function join(directory, name) {
   return (directory === '/' ? '' : directory) + '/' + name;
 }
 
+function updateFileLocation() {
+  $('file-location').hidden = !filesAvailable;
+  $('file-location-path').textContent = fileLocationPath(fileLocation, directory) || '由服务端指定';
+  $('file-location-note').textContent = fileLocationNote(fileLocation);
+}
+
 function renderBreadcrumbs() {
   const crumbs = $('breadcrumbs');
   crumbs.replaceChildren();
   let prefix = '';
   const names = directory.split('/').filter(Boolean);
-  for (const [index, name] of ['交换目录', ...names].entries()) {
+  for (const [index, name] of [fileLocation?.home ? 'HOME' : '文件目录', ...names].entries()) {
     if (index > 0) {
       prefix += '/' + name;
       crumbs.append(' / ');
@@ -368,6 +511,7 @@ async function readDirectory(target) {
     const next = await call('List', target);
     if (request !== listRequest) return;
     directory = target;
+    updateFileLocation();
     entries = next;
     renderBreadcrumbs();
     renderFiles();
@@ -429,7 +573,7 @@ window.mygo.on('mygo:file-drop', ({ paths, x, y }) => {
   if (!connected || !filesAvailable || transferring || !document.elementFromPoint(x, y)?.closest('#files-panel') ||
       !paths.length || $('drop-dialog').open) return;
   pendingDrop = { paths, target: directory };
-  $('drop-destination').textContent = '目标目录 ' + directory;
+  $('drop-destination').textContent = '目标目录 ' + (fileLocationPath(fileLocation, directory) || directory);
   $('drop-files').replaceChildren(...paths.map((file) => {
     const item = document.createElement('li');
     item.textContent = file.split(/[\\/]/).pop();
@@ -457,10 +601,25 @@ filesPanel.addEventListener('dragover', (event) => {
 });
 
 form.addEventListener('submit', connect);
-$('clipboard-toggle').addEventListener('click', () => $('clipboard-dialog').showModal());
-$('clipboard-send').addEventListener('click', () => {
-  if (connected) client.clipboardPasteFrom($('clipboard-text').value);
+$('clipboard-toggle').addEventListener('click', () => {
+  clipboard?.sync().catch(clipboardError);
+  $('clipboard-dialog').showModal();
 });
+$('clipboard-send').addEventListener('click', () => {
+  if (connected) clipboard?.send($('clipboard-text').value).catch(clipboardError);
+});
+$('clipboard-copy').addEventListener('click', () => {
+  if (connected) clipboard?.receive($('clipboard-text').value).catch(clipboardError);
+});
+window.addEventListener('focus', () => clipboard?.sync().catch(clipboardError));
+$('clipboard-copy').addEventListener('click', async () => {
+  if (!connected) return;
+  try {
+    await clipboard?.receive($('clipboard-text').value);
+  } catch (error) { clipboardError(error); }
+});
+window.addEventListener('focus', () => clipboard?.sync().catch(clipboardError));
+$('clipboard-dialog').addEventListener('close', () => { if (connected) client?.focus(); });
 $('quality-profile').addEventListener('change', selectQuality);
 $('files-toggle').addEventListener('click', () => showPanel(activePanel === 'files' ? null : 'files'));
 $('settings-toggle').addEventListener('click', () => showPanel(activePanel === 'settings' ? null : 'settings'));
@@ -512,22 +671,50 @@ async function init() {
     const server = await call('Defaults');
     const profile = server.profile;
     serverName = server.name;
-    document.title = serverName + ' · SVNC';
-    $('connection-name').textContent = serverName || profile.jump || profile.host || 'SVNC';
-    for (const [key, value] of Object.entries(profile)) {
-      if (key === 'storedPassword') {
-        $('stored-row').hidden = !value;
-        form.elements.storedPassword.checked = value;
-      } else if (form.elements[key]) {
-        form.elements[key].value = value;
-      }
-    }
-    $('advanced').open = !profile.identity;
-    if (profile.storedPassword) form.requestSubmit();
-    else form.elements.vncPassword.focus();
+    document.title = serverName + ' · SuperVNC';
+    $('connection-name').textContent = serverName || profile.jump || profile.host || 'SuperVNC';
+    setProfile(form, profile);
+    profileReady = true;
+    $('stored-row').hidden = !profile.storedPassword;
+    $('state-endpoint').textContent = desktopEndpoint(profile);
+    await connect();
   } catch (err) {
+    status('无法读取连接');
     showConnectionError(errorMessage(err));
   }
 }
+
+function changeProtocol() {
+  syncTransport(form);
+  form.elements.storedPassword.checked = false;
+  $('stored-row').hidden = true;
+}
+form.elements.protocol.addEventListener('change', changeProtocol);
+form.elements.sshTunnel.addEventListener('change', changeProtocol);
+
+$('reconnect').addEventListener('click', () => connect());
+$('edit-connection').addEventListener('click', showConnectionForm);
+$('connection-cancel').addEventListener('click', cancelConnectionForm);
+$('connection-dialog').addEventListener('cancel', event => { event.preventDefault(); cancelConnectionForm(); });
+$('save-connection').addEventListener('click', async () => {
+  const button = $('save-connection');
+  savingConnection = true;
+  syncControls();
+  button.disabled = true;
+  $('connect').disabled = true;
+  try {
+    await saveProfile(connectOptions());
+    editingSnapshot = undefined;
+    $('connection-dialog').close();
+    status('连接已保存');
+    showConnectionError('');
+  } catch (err) {
+    showConnectionError(errorMessage(err));
+  } finally {
+    button.disabled = false;
+    savingConnection = false;
+    syncControls();
+  }
+});
 
 init();

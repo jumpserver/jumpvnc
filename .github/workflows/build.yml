@@ -1,0 +1,195 @@
+name: Build SuperVNC
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server-linux:
+    name: Server / Linux ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    # Debian 13 supplies LibVNCServer >= 0.9.15, required by our X11 backend.
+    container: debian:trixie-slim
+    timeout-minutes: 25
+    steps:
+      - name: Install build and desktop test dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates git build-essential cmake pkg-config \
+            libvncserver-dev libx11-dev libxtst-dev libxfixes-dev \
+            xvfb xterm xdotool xauth xclip tigervnc-tools tigervnc-viewer \
+            tigervnc-scraping-server openssh-client iproute2 xfonts-base
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Test Agent
+        run: |
+          go test -race ./...
+          go vet ./...
+      - name: Build Agent and X11 backend
+        run: |
+          go build -trimpath -o bin/sshvnc ./cmd/server
+          cmake -S desktop/linux -B build/linux -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/linux --parallel 2
+          go test -c -o /tmp/svnc-rfb.test ./tests/integration
+      - name: Test desktop, clipboard and SFTP in isolated Xvfb sessions
+        run: |
+          useradd --create-home --shell /bin/bash svnc-ci
+          runuser -u svnc-ci -- env SVNC_RFB_TEST_BINARY=/tmp/svnc-rfb.test \
+            bash tests/integration/libvncserver.sh bin/sshvnc build/linux/svnc-desktop
+          runuser -u svnc-ci -- bash tests/integration/tigervnc.sh bin/sshvnc
+      - name: Package Linux server
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          package="supervnc-server-linux-$ARCH"
+          mkdir -p "dist/$package/bin" "dist/$package/sources"
+          cp bin/sshvnc "dist/$package/bin/"
+          cmake --install build/linux --prefix "$PWD/dist/$package"
+          cp -R configs deployments docs "dist/$package/"
+          cp README.md "dist/$package/"
+          cp desktop/linux/README.md "dist/$package/BACKEND.md"
+          git archive --format=tar.gz --output="$PWD/dist/$package/sources/supervnc.tar.gz" HEAD
+          tar -C dist -czf "dist/$package.tar.gz" "$package"
+          cd dist
+          sha256sum "$package.tar.gz" > "$package.tar.gz.sha256"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: supervnc-server-linux-${{ matrix.arch }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  server-windows:
+    name: Server / Windows amd64
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Test and build Agent
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -race ./...
+          go vet ./...
+          go build -trimpath -o bin/sshvnc.exe ./cmd/server
+      - name: Prepare pinned backend sources
+        shell: bash
+        run: sh desktop/windows/prepare-sources.sh
+      - name: Build DXGI backend
+        shell: pwsh
+        run: |
+          if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
+            choco install nasm --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'NASM installation failed' }
+          }
+          ./desktop/windows/build.ps1
+      - name: Package Windows server with matching sources and licenses
+        shell: pwsh
+        run: |
+          $package = 'supervnc-server-windows-amd64'
+          $root = Join-Path $PWD "dist/$package"
+          New-Item -ItemType Directory -Force "$root/bin", "$root/backends/windows", "$root/sources", "$root/licenses" | Out-Null
+          Copy-Item bin/sshvnc.exe "$root/bin/"
+          Copy-Item desktop/windows/build/Release/svnc-desktop.exe "$root/backends/windows/"
+          Copy-Item configs, deployments, docs $root -Recurse
+          Copy-Item README.md $root
+          Copy-Item desktop/windows/README.md "$root/BACKEND.md"
+          Copy-Item desktop/windows/COPYING "$root/licenses/LibVNCServer-COPYING"
+          Copy-Item desktop/windows/jpeg/LICENSE.md "$root/licenses/libjpeg-turbo-LICENSE.md"
+          Copy-Item desktop/windows/zlib/LICENSE "$root/licenses/zlib-LICENSE"
+          git archive --format=tar.gz --output="$root/sources/supervnc.tar.gz" HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot archive SuperVNC sources' }
+          foreach ($dependency in @('libvncserver', 'jpeg', 'zlib')) {
+            git -C "desktop/windows/$dependency" archive --format=tar.gz --output="$root/sources/$dependency.tar.gz" HEAD
+            if ($LASTEXITCODE -ne 0) { throw "Cannot archive $dependency sources" }
+          }
+          Compress-Archive -Path $root -DestinationPath "dist/$package.zip"
+          $hash = (Get-FileHash "dist/$package.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $package.zip" | Set-Content "dist/$package.zip.sha256" -Encoding ascii
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: supervnc-server-windows-amd64
+          path: |
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  client-macos:
+    name: Viewer / macOS universal
+    runs-on: macos-15
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
+        with:
+          go-version-file: client/go.mod
+          cache-dependency-path: client/go.sum
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: client/frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm --prefix frontend ci
+      - name: Test Viewer and frontend
+        run: |
+          npm --prefix frontend test
+          go test -race ./...
+          go vet ./...
+      - name: Build universal app
+        run: go tool mygo build -platform darwin/universal -skip-dmg
+      - name: Verify and package app
+        run: |
+          app=build/darwin-universal/SuperVNC.app
+          codesign --verify --deep --strict "$app"
+          lipo "$app/Contents/MacOS/SuperVNC" -verify_arch arm64 x86_64
+          mkdir -p ../dist/supervnc-viewer-macos-universal/sources
+          cp -R "$app" ../dist/supervnc-viewer-macos-universal/
+          cp README.md ../dist/supervnc-viewer-macos-universal/
+          git archive --format=tar.gz --output="$PWD/../dist/supervnc-viewer-macos-universal/sources/supervnc.tar.gz" HEAD
+          cd ../dist
+          ditto -c -k --sequesterRsrc --keepParent supervnc-viewer-macos-universal supervnc-viewer-macos-universal.zip
+          shasum -a 256 supervnc-viewer-macos-universal.zip > supervnc-viewer-macos-universal.zip.sha256
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: supervnc-viewer-macos-universal
+          path: |
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 14

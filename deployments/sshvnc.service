@@ -1,9 +1,9 @@
 [Unit]
-Description=SSH VNC gateway for the current X11 desktop
+Description=SuperVNC Server gateway for the current X11 desktop
 PartOf=graphical-session.target
 
 [Service]
-ExecStart=%h/.local/bin/sshvnc -config %h/.config/sshvnc/config.yaml
+ExecStart=%h/.local/bin/sshvnc -config /var/lib/sshvnc/%u/config.yaml
 Restart=on-failure
 RestartSec=2
 UMask=0077

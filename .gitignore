@@ -1,4 +1,7 @@
 /bin/
+.DS_Store
+__pycache__/
+*.py[cod]
 /config.yaml
 /configs/ssh_host_*
 /configs/authorized_keys

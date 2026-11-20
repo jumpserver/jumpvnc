@@ -1,4 +1,4 @@
-// Package sftpfs serves a dedicated exchange directory through SFTP.
+// Package sftpfs serves the configured directory through SFTP.
 package sftpfs
 
 import (

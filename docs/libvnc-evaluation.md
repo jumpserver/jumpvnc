@@ -1,5 +1,7 @@
 # LibVNC 评估产物：g15，2026-11-19
 
+后续正式后端接入见 [Windows LibVNCServer 后端](../desktop/windows/README.md)。本页保留早期对照实验的配置、反馈和测量限制。
+
 本次在 Windows g15 上部署 LibVNCServer 0.9.15 + DXGI Desktop Duplication + libjpeg-turbo，Mac 使用 TurboVNC Viewer 和单独实现的 LibVNCClient/SDL2 客户端试用。作为实验分支保留，不替换现有 Go Agent 或 MyGo 客户端。
 
 - [Windows 服务端与部署](../deployments/libvncserver-eval/README.md)：主屏抓取、变化块检测、键鼠注入、回环监听、计划任务和 SSH 隧道。

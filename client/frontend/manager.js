@@ -1,4 +1,5 @@
 import { selectServers } from './catalog.js';
+import { syncTransport, setProfile, profileFromForm, desktopEndpoint } from './transport.js';
 
 if (['darwin', 'win32'].includes(window.mygo?.platform)) {
   document.documentElement.classList.add('native-material');
@@ -19,6 +20,7 @@ let ready = false;
 let reading = false;
 let mutating = false;
 let toastTimer;
+let pendingImports = true; // Drain files delivered before this page subscribed.
 const opening = new Set();
 
 function icon(name) {
@@ -108,17 +110,17 @@ function card(server) {
   article.dataset.tone = String([...server.name].reduce((n, c) => n + c.codePointAt(0), 0) % 4);
   const open = element('button', 'server-open');
   open.type = 'button';
-  open.title = `在新窗口中打开 ${server.name}\n${profile.user}@${profile.host}:${profile.port}${profile.jump ? '\n跳板机：' + profile.jump : ''}`;
+  open.title = `在新窗口中打开 ${server.name}\n${desktopEndpoint(profile)}${profile.jump ? '\n跳板机：' + profile.jump : ''}`;
   const tile = element('span', 'server-icon');
   tile.append(icon('monitor'));
   const info = element('span', 'server-info');
-  info.append(element('strong', '', server.name), element('span', '', `${profile.host} · SSH ${profile.port}`));
+  info.append(element('strong', '', server.name), element('span', '', desktopEndpoint(profile)));
   open.append(tile, info);
   const footer = element('div', 'server-footer');
   const folder = element('span', 'folder-tag');
   folder.title = folderName(server.folderId);
   folder.append(icon('folder'), element('span', '', folderName(server.folderId)));
-  const protocol = element('span', 'server-protocol', `VNC :${profile.vncPort}`);
+  const protocol = element('span', 'server-protocol', profile.transport === 'subsystem' ? 'SVNC' : profile.transport === 'vnc' ? 'VNC' : 'VNC · SSH 隧道');
   const actions = element('div', 'card-actions');
   const favorite = element('button', 'icon-button favorite');
   favorite.type = 'button';
@@ -139,13 +141,21 @@ function card(server) {
   const edit = element('button', '', '编辑连接');
   edit.type = 'button';
   edit.addEventListener('click', () => { menu.open = false; showServer(server); });
+  const exportFile = element('button', '', '导出 .svnc');
+  exportFile.type = 'button';
+  exportFile.addEventListener('click', async () => {
+    menu.open = false;
+    try {
+      if (await call('ExportServer', server.id)) toast('连接已导出');
+    } catch (error) { errorAt('error', errorText(error)); }
+  });
   const remove = element('button', 'delete-action', '删除连接');
   remove.type = 'button';
   remove.addEventListener('click', () => {
     menu.open = false;
     confirmDelete('server', server.id, server.name);
   });
-  items.append(edit, remove);
+  items.append(edit, exportFile, remove);
   menu.append(summary, items);
   summary.addEventListener('click', () => closeMenus(menu));
   const connect = element('button', 'connect-button', opening.has(server.id) ? '打开中…' : '连接');
@@ -195,7 +205,7 @@ function render() {
 
 function syncControls() {
   const blocked = !ready || mutating;
-  for (const id of ['add-server', 'add-folder', 'empty-add', 'rename-folder', 'delete-folder']) $(id).disabled = blocked;
+  for (const id of ['add-server', 'import-connections', 'add-folder', 'empty-add', 'rename-folder', 'delete-folder']) $(id).disabled = blocked;
   $('refresh').disabled = reading || mutating;
   $('workspace-refresh').disabled = reading || mutating;
   $('workspace-add-folder').disabled = blocked;
@@ -220,6 +230,7 @@ async function refresh() {
   } finally {
     reading = false;
     syncControls();
+    drainImports();
   }
 }
 
@@ -238,8 +249,47 @@ async function mutate(operation, errorID = 'error') {
   } finally {
     mutating = false;
     syncControls();
+    drainImports();
   }
 }
+
+function acceptImport(result) {
+  if (!result.files) return;
+  accept(result.library);
+  if (result.added || result.skipped) {
+    $('search').value = '';
+    navigate('all');
+    const message = `已导入 ${result.added} 个连接${result.skipped ? `，跳过 ${result.skipped} 个重复连接` : ''}`;
+    toast(message);
+    $('status-count').textContent = `${library.servers.length} 个连接 · ${message}`;
+  }
+  errorAt('error', result.errors.join('\n'));
+}
+
+async function importConnections(method) {
+  mutating = true;
+  syncControls();
+  try {
+    acceptImport(await call(method));
+  } catch (error) {
+    errorAt('error', errorText(error));
+  } finally {
+    mutating = false;
+    syncControls();
+    drainImports();
+  }
+}
+
+function drainImports() {
+  if (!pendingImports || !ready || reading || mutating) return;
+  pendingImports = false;
+  importConnections('ImportPending');
+}
+
+window.mygo.on('svnc-import-requested', () => {
+  pendingImports = true;
+  drainImports();
+});
 
 async function openServer(server) {
   if (opening.has(server.id)) return;
@@ -270,11 +320,14 @@ function fillFolders(selected) {
 }
 
 function syncStoredPassword() {
-  const keys = ['host', 'port', 'user', 'jump', 'identity', 'knownHosts', 'hostKeyAlias', 'vncPort'];
-  const matches = defaults?.storedPassword && keys.every(key =>
-    String(serverForm.elements[key].value).trim() === String(defaults[key]));
-  $('stored-password-row').hidden = !matches;
-  if (!matches) serverForm.elements.storedPassword.checked = false;
+  syncTransport(serverForm);
+  const keys = ['host', 'port', 'user', 'jump', 'identity', 'knownHosts', 'hostKeyAlias', 'vncPort', 'transport'];
+  const saved = editingServer?.profile || defaults;
+  const current = profileFromForm(serverForm);
+  const matches = saved && keys.every(key =>
+    String(current[key]).trim() === String(saved[key]));
+  serverForm.elements.vncPassword.placeholder = matches && saved.storedPassword ? '已保存，留空保留原密码' : '可选，连接时填写';
+  serverForm.elements.sshPassword.placeholder = matches && saved.storedSSHPassword ? '已保存，留空保留原密码' : '可选，也可使用本机身份';
 }
 
 function showServer(server) {
@@ -283,18 +336,14 @@ function showServer(server) {
   editingServer = server;
   serverForm.reset();
   errorAt('server-error');
-  const profile = server?.profile || { ...defaults, identity: defaults.identity || '~/.ssh/id_ed25519' };
-  for (const [key, value] of Object.entries(profile)) {
-    const input = serverForm.elements[key];
-    if (!input) continue;
-    if (input.type === 'checkbox') input.checked = value;
-    else input.value = value;
-  }
+  const profile = server?.profile || defaults;
+  setProfile(serverForm, profile);
+  serverForm.elements.storedPassword.checked = true;
+  serverForm.elements.storedSSHPassword.checked = true;
   serverForm.elements.name.value = server?.name || '';
   fillFolders(server ? server.folderId : view === 'folder' ? folderID : '');
   $('server-dialog-title').textContent = server ? '编辑连接' : '添加连接';
   syncStoredPassword();
-  $('server-advanced').open = !server;
   $('server-dialog').showModal();
   serverForm.elements.name.focus();
 }
@@ -325,12 +374,9 @@ function confirmDelete(kind, id, name) {
 
 serverForm.addEventListener('submit', async event => {
   event.preventDefault();
-  const values = Object.fromEntries(new FormData(serverForm));
-  const { name, folderId, ...profile } = values;
-  profile.port = Number(profile.port);
-  profile.vncPort = Number(profile.vncPort);
-  profile.storedPassword = serverForm.elements.storedPassword.checked;
-  profile.vncPassword = '';
+  const name = serverForm.elements.name.value;
+  const folderId = serverForm.elements.folderId.value;
+  const profile = profileFromForm(serverForm);
   const server = { id: editingServer?.id || '', name, folderId, profile, favorite: editingServer?.favorite || false };
   if (await mutate(() => call('SaveServer', server), 'server-error')) {
     $('server-dialog').close();
@@ -338,11 +384,10 @@ serverForm.addEventListener('submit', async event => {
   }
 });
 serverForm.addEventListener('input', syncStoredPassword);
-
-// Expand advanced fields before the browser attempts to focus an invalid input.
-serverForm.addEventListener('invalid', event => {
-  if (event.target.closest('#server-advanced')) $('server-advanced').open = true;
-}, true);
+$('server-dialog').addEventListener('close', () => {
+  serverForm.elements.vncPassword.value = '';
+  serverForm.elements.sshPassword.value = '';
+});
 
 folderForm.addEventListener('submit', async event => {
   event.preventDefault();
@@ -370,6 +415,9 @@ for (const dialog of document.querySelectorAll('dialog')) {
 }
 for (const button of document.querySelectorAll('[data-view]')) button.addEventListener('click', () => navigate(button.dataset.view));
 $('add-server').addEventListener('click', () => showServer());
+$('import-connections').addEventListener('click', () => {
+  if (ready && !reading && !mutating) importConnections('ImportDialog');
+});
 $('empty-add').addEventListener('click', () => showServer());
 $('add-folder').addEventListener('click', () => showFolder());
 $('rename-folder').addEventListener('click', () => showFolder(library.folders.find(f => f.id === folderID)));
@@ -440,3 +488,4 @@ try {
 if (window.mygo?.platform !== 'darwin') document.querySelector('.search kbd').textContent = 'Ctrl K';
 syncControls();
 refresh();
+window.addEventListener('focus', () => { if (ready && !mutating) refresh(); });

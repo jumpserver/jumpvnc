@@ -2,6 +2,7 @@ package sshgateway
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -94,6 +95,8 @@ func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
 }
 
 func (s *Server) serveConn(ctx context.Context, raw net.Conn, log *slog.Logger) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	defer raw.Close()
 	stop := context.AfterFunc(ctx, func() { raw.Close() })
 	defer stop()
@@ -113,16 +116,25 @@ func (s *Server) serveConn(ctx context.Context, raw net.Conn, log *slog.Logger) 
 
 	var handlers sync.WaitGroup
 	defer func() {
+		cancel()
 		conn.Close()
 		handlers.Wait()
 	}()
 	handlers.Go(func() {
 		for req := range requests {
-			keepalive := req.Type == "keepalive@openssh.com" && len(req.Payload) == 0
-			if req.WantReply {
-				req.Reply(keepalive, nil)
+			allowed := req.Type == "keepalive@openssh.com" && len(req.Payload) == 0
+			var payload []byte
+			if req.Type == "sftp-location@sshvnc" && len(req.Payload) == 0 && s.files != nil {
+				allowed = true
+				payload, _ = json.Marshal(struct {
+					Root string `json:"root"`
+					Home bool   `json:"home"`
+				}{s.cfg.SFTP.Root, s.cfg.SFTP.Home})
 			}
-			if !keepalive {
+			if req.WantReply {
+				req.Reply(allowed, payload)
+			}
+			if !allowed {
 				log.Info("policy.denied", "request", req.Type)
 			}
 		}
@@ -148,7 +160,7 @@ func (s *Server) serveConn(ctx context.Context, raw net.Conn, log *slog.Logger) 
 					s.forward(ctx, channel, channelLog)
 					return
 				}
-				s.session(channel, channelLog)
+				s.session(ctx, channel, channelLog)
 			})
 		default:
 			channel.Reject(ssh.ResourceShortage, "too many channels")

@@ -1,0 +1,102 @@
+# SuperVNC Server Windows 桌面后端
+
+`svnc-desktop.exe` 使用 LibVNCServer 0.9.15、libjpeg-turbo 和 DXGI Desktop Duplication，共享当前登录用户的主屏。Go Agent 管理后端生命周期，并提供 SSH 转发、SFTP、授权和审计。文件传输只使用 SFTP；后端禁用 UltraVNC 文件传输，不编译 TightVNC 文件扩展。
+
+## 构建
+
+在 macOS/Linux 运行 `./prepare-sources.sh` 准备固定提交的依赖源码；Windows 也可以用 Git 按脚本中的提交准备 `libvncserver`、`jpeg`、`zlib` 三个目录。依赖与构建产物均不提交。
+
+Windows x64 需要 Visual Studio 2022 C++ Build Tools、Windows SDK、CMake、NASM。在本目录运行：
+
+```powershell
+.\build.ps1
+# CMake 不在 PATH 时：
+.\build.ps1 -CMakeCommand 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'
+```
+
+可用 `-Dependencies C:\path\to\sources` 指向已准备的源码。输出为 `build\Release\svnc-desktop.exe`。构建使用动态 MSVC CRT，目标 Windows 需要匹配的 x64 Visual C++ 运行库。不要使用实验目录的旧二进制；正式后端有独立的命令行参数和权限控制。
+
+## 配置与部署
+
+SFTP 默认以运行账户的 `USERPROFILE` 为根目录，配置写 `root: "~"` 或省略 `root` 即可。Agent 配置、主机私钥、VNC 密码和桌面后端需放在 HOME 外，例如 `C:\ProgramData\SVNC`；仍支持明确配置其他根目录。右侧文件栏显示实际上传位置，进入子目录后上传到当前目录。
+
+在仓库根目录构建 Agent：
+
+```powershell
+go build -o bin\sshvnc.exe .\cmd\server
+```
+
+以存放配置文件的目录为基准，将后端放到 `backends\windows\svnc-desktop.exe`。复制 `configs/windows.example.yaml`，准备 SSH 主机密钥、公钥授权文件和 `vnc-password.txt`。密码文件是 **1–8 字节可打印 ASCII 明文**，允许结尾一个 LF/CRLF，不是 TigerVNC/UltraVNC 的加密密码文件。密码不传入命令行，也不写入日志。用 NTFS ACL 限定运行账户和 SYSTEM/管理员读取配置、密钥及密码；交换目录不要包含这些文件。
+
+```yaml
+vnc:
+  engine: libvncserver
+  listen: "127.0.0.1:5900"
+  executable: backends/windows/svnc-desktop.exe
+  password_file: vnc-password.txt
+  view_only: false
+```
+
+在已登录用户的普通交互会话运行 Agent。可以从该桌面启动终端，也可以使用计划任务：
+
+```powershell
+.\deployments\windows\install.ps1 -Agent C:\svnc\sshvnc.exe -Config C:\svnc\config.yaml -Start
+# 明确需要登录时自动运行时，加 -AtLogon；默认仅注册手动任务。
+```
+
+任务以当前用户的 Limited 权限运行。安装脚本不覆盖已有任务；更新部署前先停止并删除对应任务，再注册。任务使用 Windows Job 管理 Agent 进程树，停止任务会回收后端。Agent 正常退出会停止后端；后端也监测 Agent PID，防止直接启动 Agent 后异常退出留下后端。后端异常退出使 Agent 退出，由任务的有界重试策略恢复。
+
+日志位于配置旁的 `<配置名>.agent.log`、`<配置名>.stdout.log` 和 `<配置名>.launcher-error.log`。注册启动器前，将部署目录的写权限限制给该账户和管理员。
+
+## 支持范围
+
+- 仅 IPv4 回环监听，使用独立 VNC 密码认证，SSH 承担远程传输加密。
+- 主屏画面、普通键鼠、滚轮；每个连接独立跟踪按键状态，断线释放该连接持有的按键。
+- `view_only: true` 在服务端拒绝键鼠和客户端剪贴板写入，仍可查看画面和接收文本剪贴板。SFTP 的上传/下载权限通过 `sftp.mode` 单独配置。
+- 双向文本剪贴板：ExtendedClipboard 支持 UTF-8，旧客户端使用 Latin-1 回退；不传文件、HTML 或图像。SuperVNC 客户端在当前桌面窗口激活时自动双向同步系统文本剪贴板，也可通过“剪贴板”窗口手动发送或复制文本。
+- Windows 光标形状、热点、隐藏状态和位置通过 RFB 传输。半透明边缘与老式反色光标使用掩码近似，尚未覆盖所有自定义/动画光标。
+- DXGI 访问丢失后保留连接并清空旧画面，重试普通桌面抓屏。主屏分辨率变化通过 NewFBSize 通知支持的客户端，不支持的客户端需要重连。
+
+尚不支持多屏选择、旋转屏、虚拟屏、登录界面、安全桌面、音频或 Windows 用户会话隔离。SendInput 受 UIPI 限制，普通权限后端不能保证控制提权窗口。用户注销会结束当前交互任务；后续登录需手动启动或配置 `-AtLogon`。锁屏/解锁、休眠恢复、分辨率变化的自动恢复逻辑已实现，但仍需在目标设备做完整实机验收。
+
+抓屏最多约每 16ms 尝试一次，实际吞吐受画面变化、客户端请求、编码和网络影响。当前保持单线程持有 LibVNCServer 与帧缓冲，避免并发修改造成画面撕裂；尚未进行线程拆分和 DXGI dirty/move regions 优化，不宣称相比 UltraVNC 更快。
+
+## 许可与依赖
+
+本目录代码与 LibVNCServer 使用 GPL-2.0-or-later。发布二进制时附带 COPYING，以及按许可证提供的对应源码和构建脚本；libjpeg-turbo、zlib 的许可文件也应随包提供。`cmake --install build --config Release --prefix C:/package` 可安装后端和 GPL 许可，完整分发仍需准备依赖许可及对应源码。
+
+## 验证入口
+
+仓库根目录运行 `go test -race ./...` 和 `go vet ./...`，客户端模块分别运行相同命令，并执行前端测试与 MyGo 构建。
+
+在本机建立到测试后端的 SSH 隧道后，可显式运行真实 RFB 验收；正常单元测试不会访问远端桌面：
+
+```sh
+SVNC_RFB_ADDRESS=127.0.0.1:15905 \
+SVNC_RFB_PASSWORD_FILE=/private/path/vnc-password.txt \
+go test ./tests/integration -run TestLibVNCBackend -v -count=1
+```
+
+该验收验证认证、无认证请求拒绝、禁用 RFB 文件传输、不完整握手回收、分包协商、Raw 画面、光标与 ExtendedClipboard 能力。真实键鼠、中文剪贴板双向同步及只读策略需要在独立临时测试窗口验收，避免向其他应用发送测试输入。LibVNCServer 0.9.15 的剪贴板广播 API 不过滤未认证客户端，本适配层在认证完成前延迟广播，并在 10 秒后回收未完成的握手。
+
+## 2026-11-19 g15 接入验收
+
+Windows x64 Release 构建与 Go Agent 交叉构建通过。独立试用入口为 Agent `127.0.0.1:2225`、VNC `127.0.0.1:5905`；手动交互任务 `svnc-libvnc-managed-check`，没有登录自启触发器。连接客户端时使用 SSH 跳板 `g15`，VNC 目标仍填回环地址和测试端口，凭据沿用原部署。
+
+已验证：
+
+- 正常 VNC 认证，错误密码和未声明的 None 认证被拒绝。
+- Raw 与 Tight/JPEG 画面、真实光标及 ExtendedClipboard 能力协商；分两段发送 SetEncodings 后正常读取画面。
+- 临时窗口实际收到一次点击和一次 F8；独立只读实例发送相同事件未增加计数，也不能改写剪贴板。
+- 中文文本经 ExtendedClipboard 双向传输；剪贴板变化期间，未完成握手的连接收不到剪贴板数据；不完整握手约 10 秒被回收。
+- RFB 文件传输入口拒绝；同一 Agent 的 SFTP 可上传、下载、比较并删除测试文件。
+- 后端被终止后 Agent 停止监听；手动重启恢复。停止计划任务后 Agent 和桌面后端均退出。
+- Go 与客户端 race 测试、vet、前端测试、前端打包和 macOS MyGo app 构建通过；Agent 日志仍为逐行 JSON。
+
+临时测试窗口、只读测试任务和测试文件已清理。此次为功能验收，没有建立相同画质下相对 UltraVNC 的性能优势结论。
+
+2026-11-20，g15 的托管试用入口已迁到 `C:\ProgramData\SVNC\managed`，SFTP 根目录改为 `C:\Users\Administrator`。SSH 主机密钥及 VNC 密码已重新生成并同步到本机专用连接配置。原目录中的上传文件保留。
+
+2026-11-20，g15 托管实例已更新为支持 VNC subsystem 的 Agent，SSH/SVNC 入口迁到 `127.0.0.1:5922`，后端仍为 `127.0.0.1:5905`。同一入口保留 SFTP 与受目标白名单限制的 `direct-tcpip`；普通 VNC 兼容入口保持关闭。任务仍为 `svnc-libvnc-managed-check`，当前用户交互运行，没有新增登录自启。
+
+本机 g15 连接已迁为 SVNC subsystem 并重建客户端，实机已显示 2560×1440 桌面。通过 subsystem 和旧转发分别完成 RFB 认证拒绝、Raw 画面、光标、ExtendedClipboard 能力和未完成握手回收验收，SFTP 上传/下载内容一致并清理测试文件。此次没有操作远端键鼠或改写剪贴板。部署前程序、配置与任务 XML 备份在 `C:\ProgramData\SVNC\managed\backups\before-svnc-5922-20261120-103527`；主机密钥与 VNC 密码沿用原配置。

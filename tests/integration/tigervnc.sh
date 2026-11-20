@@ -45,7 +45,7 @@ mkdir "$tmp/exchange"
 ssh-keygen -q -t ed25519 -N '' -f "$tmp/ssh_host_ed25519_key"
 ssh-keygen -q -t ed25519 -N '' -f "$tmp/client"
 cp "$tmp/client.pub" "$tmp/authorized_keys"
-printf '[127.0.0.1]:2222 %s\n' "$(cut -d ' ' -f 1,2 "$tmp/ssh_host_ed25519_key.pub")" > "$tmp/hosts"
+printf '[127.0.0.1]:5922 %s\n' "$(cut -d ' ' -f 1,2 "$tmp/ssh_host_ed25519_key.pub")" > "$tmp/hosts"
 # The viewer uses vncpasswd format; the native LibVNCServer backend uses a private plaintext file.
 printf 'svnctest\n' | vncpasswd -f > "$tmp/viewer.passwd"
 if [[ -n ${SVNC_TEST_LIBVNC_BACKEND:-} ]]; then
@@ -58,6 +58,9 @@ else
     cp "$tmp/viewer.passwd" "$tmp/vnc.passwd"
     cp "$repo/configs/server.example.yaml" "$tmp/config.yaml"
 fi
+
+# Keep integration fixtures isolated from the test user's real HOME.
+sed -i 's|root: "~".*|root: exchange|' "$tmp/config.yaml"
 
 DISPLAY=$desktop "$agent" -config "$tmp/config.yaml" >"$tmp/agent.log" 2>&1 &
 agent_pid=$!
@@ -76,16 +79,16 @@ until_ready grep -qs '"msg":"ssh.ready"' "$tmp/agent.log"
 
 options=(-o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes
          -o UserKnownHostsFile="$tmp/hosts" -i "$tmp/client")
-ssh -p 2222 "${options[@]}" -N -L 127.0.0.1:15900:127.0.0.1:5900 \
+ssh -p 5922 "${options[@]}" -N -L 127.0.0.1:15900:127.0.0.1:5900 \
     -o ExitOnForwardFailure=yes vncuser@127.0.0.1 >"$tmp/tunnel.log" 2>&1 &
 pids+=("$!")
 until_ready sh -c 'ss -H -ltn "sport = :15900" | grep -q 15900'
 
-if ssh -p 2222 "${options[@]}" -W localhost:5900 vncuser@127.0.0.1 </dev/null >"$tmp/denied.log" 2>&1; then
+if ssh -p 5922 "${options[@]}" -W localhost:5900 vncuser@127.0.0.1 </dev/null >"$tmp/denied.log" 2>&1; then
     exit 1
 fi
 grep -q 'forwarding target not permitted' "$tmp/denied.log"
-if ssh -p 2222 "${options[@]}" vncuser@127.0.0.1 true >"$tmp/exec.log" 2>&1; then
+if ssh -p 5922 "${options[@]}" vncuser@127.0.0.1 true >"$tmp/exec.log" 2>&1; then
     exit 1
 fi
 grep -q 'exec request failed' "$tmp/exec.log"
@@ -131,7 +134,7 @@ fi
 printf 'SFTP fixture\n' > "$tmp/upload"
 printf 'put "%s" /sample\nrename /sample /renamed\nget /renamed "%s"\nrm /renamed\n' \
     "$tmp/upload" "$tmp/download" > "$tmp/batch"
-sftp -b "$tmp/batch" -P 2222 "${options[@]}" vncuser@127.0.0.1
+sftp -b "$tmp/batch" -P 5922 "${options[@]}" vncuser@127.0.0.1
 cmp "$tmp/upload" "$tmp/download"
 
 kill -TERM "$agent_pid"
@@ -145,7 +148,7 @@ DISPLAY=$desktop "$agent" -config "$tmp/config.yaml" >"$tmp/restart.log" 2>&1 &
 agent_pid=$!
 pids+=("$agent_pid")
 until_ready grep -qs '"msg":"ssh.ready"' "$tmp/restart.log"
-printf 'pwd\n' | sftp -b - -P 2222 "${options[@]}" vncuser@127.0.0.1
+printf 'pwd\n' | sftp -b - -P 5922 "${options[@]}" vncuser@127.0.0.1
 kill -TERM "$agent_pid"
 wait "$agent_pid"
 [[ -z $(ss -H -ltn 'sport = :5900') ]]

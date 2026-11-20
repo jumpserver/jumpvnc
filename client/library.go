@@ -36,20 +36,15 @@ type Library struct {
 // Each mutation reloads and atomically replaces the file. A failed write leaves
 // the previous library intact and is reported to the caller.
 type libraryStore struct {
-	mu       sync.Mutex
-	filename string
-	initial  Library
+	mu        sync.Mutex
+	filename  string
+	initial   Library
+	passwords passwordStore
 }
 
 func newLibraryStore(dir string) *libraryStore {
 	initial := Library{Version: 1, Folders: []Folder{}, Servers: []Server{}}
-	if p := defaultProfile(); p.Host != "" {
-		initial.Folders = append(initial.Folders, Folder{ID: "default", Name: "默认分组"})
-		initial.Servers = append(initial.Servers, Server{
-			ID: "g15", Name: "g15", FolderID: "default", Profile: p, CreatedAt: time.Now().UnixMilli(),
-		})
-	}
-	return &libraryStore{filename: filepath.Join(dir, "connections.json"), initial: initial}
+	return &libraryStore{filename: filepath.Join(dir, "connections.json"), initial: initial, passwords: newPasswordStore()}
 }
 
 func (s *libraryStore) read() (Library, error) {
@@ -97,6 +92,11 @@ func (s *libraryStore) load() (Library, error) {
 		}
 		serverIDs[server.ID] = true
 		server.Profile.VNCPassword = ""
+		server.Profile.SSHPassword = ""
+		server.Profile.TrustHostKey = ""
+		if server.Profile.Transport == "" {
+			server.Profile.Transport = "forward"
+		}
 	}
 	return lib, nil
 }
@@ -113,6 +113,8 @@ func (s *libraryStore) update(change func(*Library) error) (Library, error) {
 	}
 	for i := range lib.Servers {
 		lib.Servers[i].Profile.VNCPassword = ""
+		lib.Servers[i].Profile.SSHPassword = ""
+		lib.Servers[i].Profile.TrustHostKey = ""
 	}
 	data, err := json.MarshalIndent(lib, "", "  ")
 	if err != nil {
@@ -144,24 +146,58 @@ func (s *libraryStore) update(change func(*Library) error) (Library, error) {
 }
 
 func (s *libraryStore) saveServer(server Server) (Library, error) {
+	return s.saveServerRecord(server, false)
+}
+
+func (s *libraryStore) saveConnectionProfile(id string, profile Profile) (Server, error) {
+	if id == "" {
+		return Server{}, errors.New("连接不存在，请刷新")
+	}
+	lib, err := s.saveServerRecord(Server{ID: id, Profile: profile}, true)
+	if err != nil {
+		return Server{}, err
+	}
+	for _, server := range lib.Servers {
+		if server.ID == id {
+			return server, nil
+		}
+	}
+	return Server{}, errors.New("连接不存在，请刷新")
+}
+
+func (s *libraryStore) saveServerRecord(server Server, profileOnly bool) (Library, error) {
 	server.Name = strings.TrimSpace(server.Name)
 	p := &server.Profile
 	p.Host, p.User, p.Jump = strings.TrimSpace(p.Host), strings.TrimSpace(p.User), strings.TrimSpace(p.Jump)
 	p.Identity, p.KnownHosts, p.HostKeyAlias = strings.TrimSpace(p.Identity), strings.TrimSpace(p.KnownHosts), strings.TrimSpace(p.HostKeyAlias)
-	if server.Name == "" || len([]rune(server.Name)) > 100 {
+	p.VNCHost = strings.TrimSpace(p.VNCHost)
+	if !profileOnly && (server.Name == "" || len([]rune(server.Name)) > 100) {
 		return Library{}, errors.New("连接名称应为 1–100 个字符")
 	}
-	if p.Host == "" || p.User == "" || p.Identity == "" || p.KnownHosts == "" ||
-		p.Port < 1 || p.Port > 65535 || p.VNCPort < 1 || p.VNCPort > 65535 {
-		return Library{}, errors.New("请填写 Agent 主机、用户名、密钥路径和有效的 SSH / VNC 端口")
+	user := p.User
+	*p = p.withDefaults()
+	p.User = user // An omitted account is requested when connecting.
+	if p.Host == "" || p.validateTransport() != nil {
+		return Library{}, errors.New("请填写服务器地址和有效的连接设置")
 	}
-	p.VNCPassword = ""
-	return s.update(func(lib *Library) error {
+	var newRef, oldRef string
+	lib, err := s.update(func(lib *Library) error {
 		if server.FolderID != "" && !lib.hasFolder(server.FolderID) {
 			return errors.New("分类已被删除，请重新选择")
 		}
 		for i, existing := range lib.Servers {
 			if existing.ID == server.ID && server.ID != "" {
+				if profileOnly {
+					profile := server.Profile
+					server = existing
+					server.Profile = profile
+				}
+				var err error
+				newRef, err = s.preparePasswords(&server.Profile, existing.Profile)
+				if err != nil {
+					return err
+				}
+				oldRef = existing.Profile.PasswordRef
 				server.CreatedAt, server.LastOpened = existing.CreatedAt, existing.LastOpened
 				lib.Servers[i] = server
 				return nil
@@ -172,9 +208,20 @@ func (s *libraryStore) saveServer(server Server) (Library, error) {
 		}
 		server.ID, server.CreatedAt = rand.Text(), time.Now().UnixMilli()
 		server.LastOpened = 0
+		var err error
+		newRef, err = s.preparePasswords(&server.Profile, Profile{})
+		if err != nil {
+			return err
+		}
 		lib.Servers = append(lib.Servers, server)
 		return nil
 	})
+	if err != nil {
+		s.cleanupPassword(newRef)
+	} else if oldRef != "" && oldRef != server.Profile.PasswordRef {
+		s.cleanupPassword(oldRef)
+	}
+	return lib, err
 }
 
 func (lib *Library) hasFolder(id string) bool {
@@ -230,15 +277,21 @@ func (s *libraryStore) deleteFolder(id string) (Library, error) {
 }
 
 func (s *libraryStore) deleteServer(id string) (Library, error) {
-	return s.update(func(lib *Library) error {
+	var ref string
+	lib, err := s.update(func(lib *Library) error {
 		for i, server := range lib.Servers {
 			if server.ID == id {
+				ref = server.Profile.PasswordRef
 				lib.Servers = append(lib.Servers[:i], lib.Servers[i+1:]...)
 				return nil
 			}
 		}
 		return errors.New("连接不存在，请刷新")
 	})
+	if err == nil {
+		s.cleanupPassword(ref)
+	}
+	return lib, err
 }
 
 func (s *libraryStore) favorite(id string, favorite bool) (Library, error) {

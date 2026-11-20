@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,7 +23,7 @@ import (
 	"sshvnc/internal/sshgateway"
 )
 
-func startGateway(t *testing.T, mode string) (*ssh.Client, string, string) {
+func startGateway(t *testing.T, mode string, options ...func(*config.Config)) (*ssh.Client, string, string) {
 	t.Helper()
 	state := t.TempDir()
 	root := filepath.Join(state, "exchange")
@@ -54,13 +56,20 @@ func startGateway(t *testing.T, mode string) (*ssh.Client, string, string) {
 	backendDone := make(chan struct{})
 	go func() {
 		defer close(backendDone)
-		conn, err := backend.Accept()
-		if err != nil {
-			return
+		var workers sync.WaitGroup
+		defer workers.Wait()
+		for {
+			conn, err := backend.Accept()
+			if err != nil {
+				return
+			}
+			workers.Go(func() {
+				defer conn.Close()
+				conn.SetDeadline(time.Now().Add(5 * time.Second))
+				conn.Write([]byte("RFB 003.008\n"))
+				io.Copy(conn, conn)
+			})
 		}
-		defer conn.Close()
-		conn.Write([]byte("RFB 003.008\n"))
-		io.Copy(io.Discard, conn)
 	}()
 	t.Cleanup(func() {
 		backend.Close()
@@ -77,6 +86,9 @@ func startGateway(t *testing.T, mode string) (*ssh.Client, string, string) {
 		},
 		VNC:  config.VNC{Listen: backend.Addr().String()},
 		SFTP: config.SFTP{Mode: mode, Root: root, MaxFileSizeMiB: 1, MaxHandles: 2},
+	}
+	for _, option := range options {
+		option(&cfg)
 	}
 	gateway, err := sshgateway.New(cfg, slog.New(slog.NewJSONHandler(io.Discard, nil)))
 	if err != nil {
@@ -190,6 +202,34 @@ func TestGatewayPolicies(t *testing.T) {
 	}
 }
 
+func TestSFTPLocation(t *testing.T) {
+	for _, mode := range []string{"read_write", "disabled"} {
+		t.Run(mode, func(t *testing.T) {
+			client, root, _ := startGateway(t, mode)
+			ok, data, err := client.SendRequest("sftp-location@sshvnc", true, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mode == "disabled" {
+				if ok || len(data) != 0 {
+					t.Fatal("disclosed a disabled SFTP directory")
+				}
+				return
+			}
+			var location struct {
+				Root string `json:"root"`
+				Home bool   `json:"home"`
+			}
+			if !ok || json.Unmarshal(data, &location) != nil || location.Root != root || location.Home {
+				t.Fatalf("unexpected location: %s", data)
+			}
+			if ok, _, err := client.SendRequest("sftp-location@sshvnc", true, []byte("invalid")); err != nil || ok {
+				t.Fatalf("accepted malformed request: %v", err)
+			}
+		})
+	}
+}
+
 func TestSFTPIsolationAndSizeLimit(t *testing.T) {
 	client, root, _ := startGateway(t, "read_write")
 	files, err := sftp.NewClient(client)
@@ -291,5 +331,100 @@ func TestSFTPAccessModes(t *testing.T) {
 				t.Fatalf("%s read=%v write=%v list=%v", mode, readErr, writeErr, listErr)
 			}
 		})
+	}
+}
+
+// The desktop subsystem, legacy Guacamole tunnel and SFTP share one SSH
+// connection while desktop authorization remains independent of file access.
+func TestVNCSubsystemWithExistingProtocols(t *testing.T) {
+	for _, mode := range []string{"disabled", "read_write"} {
+		t.Run(mode, func(t *testing.T) {
+			client, _, target := startGateway(t, mode, func(c *config.Config) { c.SSH.Limits.MaxChannelsPerConnection = 4 })
+			channel, requests, err := client.OpenChannel("session", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer channel.Close()
+			go ssh.DiscardRequests(requests)
+			if ok, err := channel.SendRequest("subsystem", true, ssh.Marshal(struct{ Name string }{"vnc"})); err != nil || !ok {
+				t.Fatalf("VNC subsystem: %v, %v", ok, err)
+			}
+			checkDesktopStream(t, channel)
+			if ok, err := channel.SendRequest("shell", true, nil); err != nil || ok {
+				t.Fatalf("shell request on VNC channel: %v, %v", ok, err)
+			}
+			if mode != "disabled" {
+				files, err := sftp.NewClient(client)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer files.Close()
+				if _, err := files.ReadDir("/"); err != nil {
+					t.Fatal(err)
+				}
+			} else if files, err := sftp.NewClient(client); err == nil {
+				files.Close()
+				t.Fatal("SFTP enabled by VNC subsystem")
+			}
+			tunnel, err := client.Dial("tcp", target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tunnel.Close()
+			checkDesktopStream(t, tunnel)
+		})
+	}
+}
+
+func checkDesktopStream(t *testing.T, stream io.ReadWriter) {
+	t.Helper()
+	banner := make([]byte, 12)
+	if _, err := io.ReadFull(stream, banner); err != nil || string(banner) != "RFB 003.008\n" {
+		t.Fatalf("RFB banner = %q, %v", banner, err)
+	}
+	// Preserve arbitrary binary bytes, including RFB authentication messages.
+	payload := []byte{0, 1, 2, 128, 255, 0}
+	if _, err := stream.Write(payload); err != nil {
+		t.Fatal(err)
+	}
+	got := make([]byte, len(payload))
+	if _, err := io.ReadFull(stream, got); err != nil || string(got) != string(payload) {
+		t.Fatalf("RFB round trip = %v, %v", got, err)
+	}
+}
+
+func TestVNCSubsystemDeniedWithoutDesktopPermission(t *testing.T) {
+	client, _, target := startGateway(t, "read_write", func(c *config.Config) { c.SSH.AllowVNC = false })
+	session, err := client.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	if err := session.RequestSubsystem("vnc"); err == nil {
+		t.Fatal("VNC subsystem bypassed desktop policy")
+	}
+	if conn, err := client.Dial("tcp", target); err == nil {
+		conn.Close()
+		t.Fatal("legacy forwarding bypassed desktop policy")
+	}
+	files, err := sftp.NewClient(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer files.Close()
+}
+
+func TestVNCSubsystemRejectsUnavailableBackend(t *testing.T) {
+	unavailable := listen(t)
+	address := unavailable.Addr().String()
+	unavailable.Close()
+	client, _, _ := startGateway(t, "disabled", func(c *config.Config) { c.VNC.Listen = address })
+	session, err := client.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	if err := session.RequestSubsystem("vnc"); err == nil {
+		t.Fatal("accepted unavailable desktop")
 	}
 }

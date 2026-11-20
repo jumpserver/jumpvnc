@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,9 +12,28 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"golang.org/x/crypto/ssh"
 )
 
 const uploadPrefix = ".sshvnc-upload-"
+
+type FileLocation struct {
+	Root string `json:"root"`
+	Home bool   `json:"home"`
+}
+
+func readFileLocation(client *ssh.Client) *FileLocation {
+	ok, data, err := client.SendRequest("sftp-location@sshvnc", true, nil)
+	if err != nil || !ok || len(data) > 16384 {
+		return nil
+	}
+	var location FileLocation
+	if json.Unmarshal(data, &location) != nil || location.Root == "" || len(location.Root) > 4096 || strings.ContainsAny(location.Root, "\x00\r\n") {
+		return nil
+	}
+	return &location
+}
 
 type FileEntry struct {
 	Name     string `json:"name"`

@@ -1,6 +1,75 @@
 // Compatibility adapter for the pinned noVNC 1.7.0 and native LibVNCServer backends.
 export function nativeRFB(BaseRFB) {
   return class NativeRFB extends BaseRFB {
+    constructor(...args) {
+      super(...args);
+      // Native/synthetic WebView input can carry modifier flags without a
+      // separate modifier keydown. Reconcile before noVNC handles the key.
+      const modifiers = event => {
+        const mappings = [
+          ['shiftKey', 'ShiftLeft', 'ShiftRight', 0xffe1],
+          ['ctrlKey', 'ControlLeft', 'ControlRight', 0xffe3],
+          ['metaKey', 'MetaLeft', 'MetaRight', 0xffeb],
+        ];
+        // Release old modifiers first: Command and Control can map to the
+        // same remote key when switching between successive shortcuts.
+        for (const [flag, left, right] of mappings) {
+          if (event.code === left || event.code === right) continue;
+          const held = this._keyboard._keyDownList;
+          if (!event[flag]) {
+            for (const code of [left, right]) {
+              if (code in held) this._keyboard._sendKeyEvent(held[code], code, false);
+            }
+          }
+        }
+        for (const [flag, left, right, sym] of mappings) {
+          if (event.code === left || event.code === right) continue;
+          const held = this._keyboard._keyDownList;
+          if (event[flag] && !(left in held) && !(right in held)) {
+            this._keyboard._sendKeyEvent(sym, left, true);
+          }
+        }
+      };
+      this._canvas?.addEventListener('keydown', modifiers, true);
+      this._canvas?.addEventListener('keyup', modifiers, true);
+    }
+
+    _handleKeyEvent(keysym, code, down, ...locks) {
+      // A Mac's Command shortcuts should operate the Windows/Linux desktop.
+      // Change the physical code too: QEMU key events use it, not the keysym.
+      if (this.commandAsControl && (code === 'MetaLeft' || code === 'MetaRight')) {
+        code = code === 'MetaLeft' ? 'ControlLeft' : 'ControlRight';
+        keysym = code === 'ControlLeft' ? 0xffe3 : 0xffe4;
+      }
+      this._nativeControls ??= new Set();
+      if (code === 'ControlLeft' || code === 'ControlRight') {
+        if (down) this._nativeControls.add(code);
+        else this._nativeControls.delete(code);
+      }
+      const paste = down && code === 'KeyV' && this._nativeControls.size && this.beforePaste;
+      const forward = () => super._handleKeyEvent(keysym, code, down, ...locks);
+      if (paste || this._nativeKeyQueue) {
+        const next = (this._nativeKeyQueue || Promise.resolve()).then(async () => {
+          if (paste) await this.beforePaste();
+          forward();
+        }).catch(error => this.onClipboardError?.(error));
+        this._nativeKeyQueue = next;
+        next.then(() => { if (this._nativeKeyQueue === next) this._nativeKeyQueue = undefined; });
+        return;
+      }
+      return forward();
+    }
+
+    _handleServerCutText() {
+      const previous = this._clipboardServerCapabilitiesFormats;
+      const result = super._handleServerCutText();
+      if (previous !== this._clipboardServerCapabilitiesFormats) {
+        // Resend after negotiation; the first sync may have used Latin-1.
+        this.dispatchEvent(new Event('clipboardcapabilities'));
+      }
+      return result;
+    }
+
     _handleMouse(event) {
       // Some native WebView event sources report buttons=0 even on mousedown.
       // The changed button still identifies the press; preserve normal browser
