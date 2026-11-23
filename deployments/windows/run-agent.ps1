@@ -1,6 +1,7 @@
 param(
   [Parameter(Mandatory=$true)][string]$Agent,
-  [Parameter(Mandatory=$true)][string]$Config
+  [Parameter(Mandatory=$true)][string]$Config,
+  [switch]$NoTray
 )
 $ErrorActionPreference='Stop'
 $base=Join-Path (Split-Path -Parent $Config) ([IO.Path]::GetFileNameWithoutExtension($Config))
@@ -46,7 +47,9 @@ public sealed class SvncAgentJob : IDisposable {
 $job=New-Object SvncAgentJob
 $childProcess=$null
 try {
-  $childProcess=Start-Process -FilePath $Agent -ArgumentList ('-config "'+$Config+'"') -WorkingDirectory (Split-Path -Parent $Config) -PassThru -WindowStyle Hidden -RedirectStandardOutput "$base.stdout.log" -RedirectStandardError "$base.agent.log"
+  $arguments='-config "'+$Config+'"'
+  if ($NoTray) { $arguments+=' -no-tray' }
+  $childProcess=Start-Process -FilePath $Agent -ArgumentList $arguments -WorkingDirectory (Split-Path -Parent $Config) -PassThru -WindowStyle Hidden -RedirectStandardOutput "$base.stdout.log" -RedirectStandardError "$base.agent.log"
   $job.Add($childProcess)
   Remove-Item "$base.launcher-error.log" -ErrorAction SilentlyContinue
   $childProcess.WaitForExit()

@@ -165,21 +165,28 @@ func command(ctx context.Context, cfg config.VNC) (*exec.Cmd, error) {
 
 // The desktop backend reads this file itself; the password never enters argv.
 func checkDesktopPassword(name string) error {
+	password, err := ReadDesktopPassword(name)
+	clear(password)
+	return err
+}
+
+// ReadDesktopPassword reads the password format used by the LibVNCServer backend.
+func ReadDesktopPassword(name string) ([]byte, error) {
 	f, err := os.Open(name)
 	if err != nil {
-		return fmt.Errorf("LibVNCServer password file: %w", err)
+		return nil, fmt.Errorf("LibVNCServer password file: %w", err)
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !info.Mode().IsRegular() || (runtime.GOOS != "windows" && info.Mode().Perm()&0077 != 0) {
-		return errors.New("LibVNCServer password file must be a private regular file")
+		return nil, errors.New("LibVNCServer password file must be a private regular file")
 	}
 	data, err := io.ReadAll(io.LimitReader(f, 11))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// Accept one optional LF or CRLF, but no extra lines or silent truncation.
 	if len(data) > 0 && data[len(data)-1] == '\n' {
@@ -188,11 +195,20 @@ func checkDesktopPassword(name string) error {
 			data = data[:len(data)-1]
 		}
 	}
-	if len(data) < 1 || len(data) > 8 {
+	if err := ValidateDesktopPassword(string(data)); err != nil {
+		clear(data)
+		return nil, err
+	}
+	return data, nil
+}
+
+// ValidateDesktopPassword applies the backend's VNC authentication length and encoding rules.
+func ValidateDesktopPassword(password string) error {
+	if len(password) < 1 || len(password) > 8 {
 		return errors.New("LibVNCServer password must contain 1-8 printable ASCII bytes")
 	}
-	for _, b := range data {
-		if b < 32 || b > 126 {
+	for i := range len(password) {
+		if password[i] < 32 || password[i] > 126 {
 			return errors.New("LibVNCServer password must contain 1-8 printable ASCII bytes")
 		}
 	}

@@ -92,7 +92,7 @@ systemctl --user import-environment DISPLAY XAUTHORITY
 
 ## Windows 当前用户桌面
 
-Windows 默认后端为自建的 **LibVNCServer + DXGI** 桌面程序。构建、部署、计划任务、文本剪贴板和已知限制见 [Windows 后端说明](desktop/windows/README.md)。Go Agent、桌面后端和 SFTP 使用同一部署，桌面只在回环地址监听。
+Windows 默认后端为自建的 **LibVNCServer + DXGI** 桌面程序。构建、部署、计划任务、文本剪贴板和已知限制见 [Windows 后端说明](desktop/windows/README.md)。Go Agent、桌面后端和 SFTP 使用同一部署，桌面只在回环地址监听。双击托盘图标可打开管理窗口，查看连接配置、启停服务、切换兼容入口，以及设置 SFTP 根目录和 VNC 密码。
 
 ```powershell
 go build -o bin/sshvnc.exe ./cmd/server
@@ -106,7 +106,7 @@ UltraVNC 仍可通过 `vnc.engine: ultravnc` 使用：指定 `winvnc.exe`，移�
 
 ## 配置与运行行为
 
-- `ssh.allow_vnc` 同时控制 VNC subsystem、旧转发和可选 VNC 兼容入口的桌面授权。启用时，Agent 等待 RFB 握手标识后开始接收 SSH 会话。托管后端退出会触发 Agent 退出，由进程管理器恢复。使用 `vnc.engine: external` 时，由独立服务负责后端启停、仅回环监听和独立 VNC 认证。
+- `ssh.allow_vnc` 同时控制 VNC subsystem、旧转发和可选 VNC 兼容入口的桌面授权。启用时，Agent 等待 RFB 握手标识后开始接收 SSH 会话。托管后端退出后，可从 Windows 托盘查看错误并重新启动服务。前台模式下 Agent 退出，由进程管理器按需恢复。使用 `vnc.engine: external` 时，由独立服务负责后端启停、仅回环监听和独立 VNC 认证。
 - `vnc.view_only` 为托管后端启用只读桌面。LibVNCServer 在服务端拒绝键鼠和剪贴板写入；配置 UltraVNC 时同步设置 `InputsEnabled=0`。文本剪贴板走 VNC，文件传输走独立 SFTP。桌面只读与 SFTP 上传/下载权限分别配置。
 - `sftp.mode` 支持 `disabled`、`read_only`、`write_only` 和 `read_write`。`write_only` 可上传、检查指定路径的元数据和管理目录中的文件，禁止下载与目录枚举。服务支持上传、下载、列目录、重命名、删除和创建目录。文件与目录以受限权限创建，禁止创建链接、变更属主和保留客户端文件属性。
 - SFTP 默认使用 Agent 运行账户的 HOME；`root: "~"` 或省略 `root` 在 Linux/Windows 均表示用户主目录（Windows 为 `USERPROFILE`），自定义相对路径仍基于配置文件目录。客户端右侧显示实际上传位置，进入子目录后上传到当前目录。Go 的 `os.Root` 限制目录边界，打开文件时核验类型与硬链接计数。配置、密钥、VNC 密码和后端程序放在此目录之外；包含这些文件的根目录会被拒绝。单文件上传大小由 `max_file_size_mib` 限制，目录总容量由部署侧配额控制。

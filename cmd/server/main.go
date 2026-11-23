@@ -16,24 +16,30 @@ import (
 	"sshvnc/internal/vnc"
 )
 
+const productName = "SuperVNC Server"
+
 func main() {
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "SuperVNC Server — SVNC desktop and SFTP gateway\n\nUsage: %s [options]\n", os.Args[0])
+		fmt.Fprintf(flag.CommandLine.Output(), "%s — SVNC desktop and SFTP gateway\n\nUsage: %s [options]\n", productName, os.Args[0])
 		flag.PrintDefaults()
 	}
 	name := flag.String("config", "config.yaml", "path to the YAML configuration")
+	noTray := flag.Bool("no-tray", false, "run in the foreground without a notification area icon (Windows)")
 	flag.Parse()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	log := slog.New(slog.NewJSONHandler(os.Stderr, nil)).With("product", "SuperVNC Server")
-	if err := run(ctx, *name, log); err != nil && ctx.Err() == nil {
+	log := slog.New(slog.NewJSONHandler(os.Stderr, nil)).With("product", productName)
+	if err := runAgent(ctx, *name, *noTray, log); err != nil && ctx.Err() == nil {
 		log.Error("agent.error", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, name string, log *slog.Logger) error {
+func run(ctx context.Context, name string, log *slog.Logger, ready func()) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	cfg, err := config.Load(name)
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
@@ -73,10 +79,10 @@ func run(ctx context.Context, name string, log *slog.Logger) error {
 		}
 		defer compatibility.Close()
 	}
-	return serve(ctx, cancel, listener, compatibility, gateway, exited, cfg, log)
+	return serve(ctx, cancel, listener, compatibility, gateway, exited, cfg, log, ready)
 }
 
-func serve(ctx context.Context, cancel context.CancelFunc, listener, compatibility net.Listener, gateway *sshgateway.Server, exited <-chan error, cfg config.Config, log *slog.Logger) error {
+func serve(ctx context.Context, cancel context.CancelFunc, listener, compatibility net.Listener, gateway *sshgateway.Server, exited <-chan error, cfg config.Config, log *slog.Logger, ready func()) error {
 	served := make(chan error, 2)
 	remaining := 1
 	go func() { served <- gateway.Serve(ctx, listener) }()
@@ -87,6 +93,9 @@ func serve(ctx context.Context, cancel context.CancelFunc, listener, compatibili
 	}
 	log.Info("ssh.ready", "listen", listener.Addr().String(), "host_key", gateway.HostFingerprint(),
 		"allow_vnc", cfg.SSH.AllowVNC, "sftp_mode", cfg.SFTP.Mode)
+	if ready != nil {
+		ready()
+	}
 	var result error
 	select {
 	case result = <-served:

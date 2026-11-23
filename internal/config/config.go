@@ -62,6 +62,36 @@ type VNC struct {
 }
 
 func Load(name string) (Config, error) {
+	name, err := filepath.Abs(name)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg, err := ReadSettings(name)
+	if err != nil {
+		return Config{}, err
+	}
+	return cfg.resolvePaths(name)
+}
+
+// ReadSettings decodes the configuration without opening its referenced paths.
+func ReadSettings(name string) (Config, error) {
+	f, err := os.Open(name)
+	if err != nil {
+		return Config{}, err
+	}
+	defer f.Close()
+	return decodeSettings(f)
+}
+
+func decodeSettings(input io.Reader) (Config, error) {
+	cfg, err := parseSettings(input)
+	if err != nil {
+		return Config{}, err
+	}
+	return cfg.validateSettings()
+}
+
+func parseSettings(input io.Reader) (Config, error) {
 	cfg := Config{
 		Audit: true,
 		SSH: SSH{
@@ -75,17 +105,7 @@ func Load(name string) (Config, error) {
 		VNC:  VNC{Engine: "external", Listen: "127.0.0.1:5900", StartupTimeoutSeconds: 15},
 	}
 
-	name, err := filepath.Abs(name)
-	if err != nil {
-		return Config{}, err
-	}
-	f, err := os.Open(name)
-	if err != nil {
-		return Config{}, err
-	}
-	defer f.Close()
-
-	decoder := yaml.NewDecoder(f)
+	decoder := yaml.NewDecoder(input)
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&cfg); err != nil {
 		return Config{}, err
@@ -94,7 +114,10 @@ func Load(name string) (Config, error) {
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		return Config{}, errors.New("expected a single YAML document")
 	}
+	return cfg, nil
+}
 
+func (cfg Config) validateSettings() (Config, error) {
 	if cfg.VNC.Compatibility.Enabled && cfg.VNC.Compatibility.Listen == "" {
 		host, port, err := net.SplitHostPort(cfg.SSH.Listen)
 		number, portErr := strconv.Atoi(port)
@@ -107,16 +130,12 @@ func Load(name string) (Config, error) {
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
 	}
+	return cfg, nil
+}
 
+func (cfg Config) resolvePaths(name string) (Config, error) {
 	dir := filepath.Dir(name)
-	if cfg.SFTP.Mode != "disabled" && (cfg.SFTP.Root == "" || cfg.SFTP.Root == "~") {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return Config{}, fmt.Errorf("SFTP home directory: %w", err)
-		}
-		cfg.SFTP.Root = home
-	}
-	for _, value := range []*string{&cfg.SSH.HostKeyFile, &cfg.SSH.AuthorizedKeysFile, &cfg.SFTP.Root, &cfg.VNC.PasswordFile} {
+	for _, value := range []*string{&cfg.SSH.HostKeyFile, &cfg.SSH.AuthorizedKeysFile, &cfg.VNC.PasswordFile} {
 		if *value != "" && !filepath.IsAbs(*value) {
 			*value = filepath.Join(dir, *value)
 		}
@@ -126,9 +145,9 @@ func Load(name string) (Config, error) {
 	}
 
 	if cfg.SFTP.Mode != "disabled" {
-		root, err := filepath.EvalSymlinks(cfg.SFTP.Root)
+		root, err := cfg.SFTP.RootDirectory(name)
 		if err != nil {
-			return Config{}, fmt.Errorf("sftp.root: %w", err)
+			return Config{}, err
 		}
 		protected := []string{name, cfg.SSH.HostKeyFile, cfg.SSH.AuthorizedKeysFile}
 		if cfg.SSH.AllowVNC {
@@ -163,8 +182,34 @@ func Load(name string) (Config, error) {
 				cfg.SFTP.Home = samePath(root, resolved)
 			}
 		}
+	} else if cfg.SFTP.Root != "" && !filepath.IsAbs(cfg.SFTP.Root) {
+		cfg.SFTP.Root = filepath.Join(dir, cfg.SFTP.Root)
 	}
 	return cfg, nil
+}
+
+// RootDirectory resolves the configured SFTP path relative to the YAML file.
+func (s SFTP) RootDirectory(name string) (string, error) {
+	root := s.Root
+	if root == "" || root == "~" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("SFTP home directory: %w", err)
+		}
+		root = home
+	}
+	if !filepath.IsAbs(root) {
+		name, err := filepath.Abs(name)
+		if err != nil {
+			return "", err
+		}
+		root = filepath.Join(filepath.Dir(name), root)
+	}
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", fmt.Errorf("sftp.root: %w", err)
+	}
+	return resolved, nil
 }
 
 func samePath(a, b string) bool {
