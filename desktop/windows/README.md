@@ -2,9 +2,11 @@
 
 `svnc-desktop.exe` 使用 LibVNCServer 0.9.15、libjpeg-turbo 和 DXGI Desktop Duplication，共享当前登录用户的主屏。Go Agent 管理后端生命周期，并提供 SSH 转发、SFTP、授权和审计。文件传输只使用 SFTP；后端禁用 UltraVNC 文件传输，不编译 TightVNC 文件扩展。
 
-支持由客户端显式选择的 H.264 试用模式：RFB 编码 50（与 LibVNCServer 头文件中的 `rfbEncodingH264` 不是同一种封装），通过原 SSH 桌面通道传输。当前使用 Windows 内置的同步 Media Foundation 软件编码器、NV12 / 4:2:0、Baseline、无 B 帧、低延迟模式，平均码率目标 6 Mbps、最高 30 FPS；尚未提供硬件编码、自适应码率或 UDP 媒体通道。关键帧可以短时超过平均码率。只在画面变化或客户端请求刷新时编码，最多两个视频客户端，支持正偶数尺寸且不超过 4096×2160；不满足条件时保留原 RFB 编码协商。运行中编码失败时先发送一个 Raw 矩形以保持已宣布的矩形数量一致，随后回退普通编码。
+支持由客户端显式选择的 H.264 试用模式：RFB 编码 50（与 LibVNCServer 头文件中的 `rfbEncodingH264` 不是同一种封装），通过原 SSH 桌面通道传输。优先枚举 Media Foundation 硬件编码器，初始化或运行失败时回退 Windows 内置的同步软件编码器。图像使用 NV12 / 4:2:0、Baseline、无 B 帧，平均码率目标 6 Mbps、最高 30 FPS；尚未提供自适应码率或 UDP 媒体通道。请求码率和驱动回读不代表严格的输出上限，实际流量应单独采样。只在画面变化或客户端请求刷新时编码，最多两个视频客户端，支持正偶数尺寸且不超过 4096×2160；不满足条件时保留原 RFB 编码协商。软件编码也失败时先发送一个 Raw 矩形以保持已宣布的矩形数量一致，随后回退普通编码。
 
-`h264.cmake` 为固定版本的 LibVNCServer 在构建目录生成编码协商/发送的覆盖源文件，不修改依赖检出；原源码钩子不匹配时构建失败。每个视频客户端独立维护编码上下文，重连、重新协商或尺寸改变时重建，并在首帧携带解码上下文重置标志。完整帧按顺序编码，不排队保存历史画面。`h264.ready`、`h264.unavailable`、`h264.failed`、`h264.stats` 日志可用于排查编码器、码率和编码耗时。
+硬件 MFT 解锁异步接口后按 NeedInput / HaveOutput 事件处理，应用最多保留一幅在途画面；首帧事件等待上限为 1 秒，后续为 200 ms，超时回退软件。驱动 API 调用本身不受这些事件等待上限约束。失败后销毁硬件实例，用同一幅 NV12 图像重试软件 IDR，并通知 RFB 重置客户端解码上下文。格式协商后重新应用码率控制并记录可用的属性回读。采集回读和 BGRA → NV12 转换仍在 CPU 上，没有实现 DXGI 纹理直接送编码器。当前实机验证了 NVIDIA RTX 3060 Laptop GPU；其他厂商驱动需单独验收。
+
+`h264.cmake` 为固定版本的 LibVNCServer 在构建目录生成编码协商/发送的覆盖源文件，不修改依赖检出；原源码钩子不匹配时构建失败。每个视频客户端独立维护编码上下文，重连、重新协商、尺寸改变或硬件回退时重建，并在新编码流首帧携带解码上下文重置标志。完整帧按顺序编码，不排队保存历史画面。`h264.config`、`h264.ready`、`h264.hardware_unavailable`、`h264.hardware_failed`、`h264.unavailable`、`h264.failed`、`h264.stats` 日志可用于排查编码器、码率和编码耗时；`hardware=1` 表示当前使用硬件 MFT，`hardware=0` 表示软件。
 
 ## 构建
 
@@ -133,6 +135,16 @@ go test ./tests/integration -run TestLibVNCBackend -v -count=1
 
 ## 2026-11-24 H.264 试用验收
 
+硬件编码补充：
+
+- g15 默认选择 `NVIDIA H.264 Encoder MFT`，实际桌面会话的 `h264.ready` / `h264.stats` 均确认 `hardware=1`，同时观察到 NVIDIA 编码引擎有负载。客户端画面正常，采样约 4–5 Mbps、每秒约 23–25 次画面更新，绘制队列与未解析数据为 0。与此前软件编码观察的画面内容不同，不作为严格性能对比。
+- 同一 2560×1440 合成任务、120 帧：软件每帧进程 CPU 时间约 36 ms，硬件多次采样约 10–13 ms（包含合成图像更新和色彩转换）。短流媒体速率软件约 6.09 Mbps、硬件约 8.08 Mbps，说明 6 Mbps 的请求和回读不是实际输出硬上限；没有为了达到码率目标丢弃已编码的参考帧。
+- 严格硬件模式全程 120 帧均未回退；在第 60 帧已经提交硬件后注入故障，自动软件重试成功，编码流代次增加，重试帧包含 SPS/PPS/IDR，合计仍输出 120 帧。FFmpeg 解码和 noVNC 访问单元解析均为 120 帧。故障注入只编入 `h264-smoke`，不编入正式后端。
+- 硬件临时后端的真实 RFB 验收通过：首帧、后续帧、两轮 H.264 → Raw → H.264 切换，以及原有认证拒绝和 Raw/光标/剪贴板协商。
+- 升级前的软件编码后端及 `restore.ps1` 保存在 g15 的 `C:\Program Files\SuperVNC\backups\before-hardware-h264-20261124-130134`。
+
+最初的软件编码试用记录：
+
 - Windows 后端交叉构建、macOS Universal 客户端构建通过。
 - g15 软件编码合成验收：2560×1440 桌面中一个 960×540 区域持续变化，120 帧全部输出，媒体平均约 6.09 Mbps。FFmpeg 完整解码 120 帧通过；客户端访问单元解析也得到 120 帧（含两个关键帧）。此数据不是游戏性能对比。
 - 真实回环 SSH 隧道验收通过：编码 50 首帧的 SPS/PPS/IDR、后续帧、两轮 H.264 → Raw → H.264 切换；原有认证拒绝、文件扩展拒绝、未完成握手回收、Raw/光标/剪贴板能力验收通过。
@@ -144,6 +156,10 @@ go test ./tests/integration -run TestLibVNCBackend -v -count=1
 ```powershell
 cmake --build desktop/windows/build --config Release --target h264-smoke
 .\desktop\windows\build\Release\h264-smoke.exe "$env:TEMP\svnc-h264-smoke.h264"
+# 强制软件、严格硬件验收、模拟硬件在途故障：
+.\desktop\windows\build\Release\h264-smoke.exe "$env:TEMP\svnc-software.h264" software
+.\desktop\windows\build\Release\h264-smoke.exe "$env:TEMP\svnc-hardware.h264" hardware
+.\desktop\windows\build\Release\h264-smoke.exe "$env:TEMP\svnc-fallback.h264" fallback
 ```
 
 真实协议验收显式指定临时后端的 SSH 回环隧道：

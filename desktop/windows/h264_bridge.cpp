@@ -15,6 +15,7 @@ struct VideoClient {
     ULONGLONG reportAt = GetTickCount64();
     uint64_t bytes = 0, frames = 0, encodeMs = 0;
     int fallback = rfbEncodingRaw;
+    uint64_t generation = 0;
 };
 // LibVNCServer and these encoders are owned by the backend event-loop thread.
 static std::map<rfbClientPtr, std::unique_ptr<VideoClient>> clients;
@@ -29,9 +30,10 @@ extern "C" rfbBool svncH264Select(rfbClientPtr cl) {
                 static_cast<unsigned long>(video->encoder.error()), cl->screen->width, cl->screen->height);
         return FALSE;
     }
+    video->generation = video->encoder.generation();
+    fprintf(stderr, "h264.ready encoder=%s hardware=%d target_bps=%u max_fps=%u\n",
+            video->encoder.name(), static_cast<int>(video->encoder.hardware()), H264Encoder::bitrate, H264Encoder::fps);
     clients[cl] = std::move(video);
-    fprintf(stderr, "h264.ready encoder=Microsoft-software target_bps=%u max_fps=%u\n",
-            H264Encoder::bitrate, H264Encoder::fps);
     return TRUE;
 }
 extern "C" void svncH264Reset(rfbClientPtr cl) { clients.erase(cl); }
@@ -72,10 +74,15 @@ extern "C" rfbBool svncH264Send(rfbClientPtr cl) {
         return rfbSendRectEncodingRaw(cl, 0, 0, cl->scaledScreen->width, cl->scaledScreen->height);
     }
     video.encodeMs += GetTickCount64() - now;
+    if (video.generation != video.encoder.generation()) {
+        video.generation = video.encoder.generation();
+        video.reset = true;
+    }
     video.bytes += bytes.size();
     ++video.frames;
     if (now - video.reportAt >= 5000) {
-        fprintf(stderr, "h264.stats fps=%.1f mbps=%.3f encode_ms=%.1f\n",
+        fprintf(stderr, "h264.stats hardware=%d fps=%.1f mbps=%.3f encode_ms=%.1f\n",
+                static_cast<int>(video.encoder.hardware()),
                 video.frames * 1000.0 / (now - video.reportAt),
                 video.bytes * 8.0 / (now - video.reportAt) / 1000,
                 video.encodeMs * 1.0 / video.frames);
