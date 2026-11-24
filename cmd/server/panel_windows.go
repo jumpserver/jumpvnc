@@ -252,7 +252,7 @@ func (t *windowsTray) panelProc(hwnd uintptr, message uint32, wParam, lParam uin
 				t.browsePanelRoot()
 			}
 		case idRootHome:
-			if t.panel.rootEnabled {
+			if t.panel.rootEnabled && t.registration == nil {
 				setControlText(t.panel.rootInput, "~")
 			}
 		case idRootSave:

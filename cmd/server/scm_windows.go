@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -46,8 +45,8 @@ func (s windowsService) Execute(_ []string, commands <-chan svc.ChangeRequest, s
 	done := make(chan error, 1)
 	go func() {
 		done <- runWithBackend(ctx, s.configPath, log, func() { close(ready) }, func(ctx context.Context, cfg config.Config, log *slog.Logger) (vnc.Backend, error) {
-			if !cfg.SSH.AllowVNC || cfg.VNC.Engine != "libvncserver" || cfg.VNC.Compatibility.Enabled || cfg.SFTP.Mode != "disabled" {
-				return vnc.Backend{}, fmt.Errorf("service mode requires ssh.allow_vnc, the libvncserver backend, and disabled SFTP and plain VNC compatibility")
+			if err := validateServiceBackend(cfg); err != nil {
+				return vnc.Backend{}, err
 			}
 			return vnc.StartConsole(ctx, cfg.VNC, log, s.configPath+".desktop.log")
 		})

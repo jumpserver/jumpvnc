@@ -6,7 +6,10 @@ ssh:
   allow_vnc: true
 
 sftp:
+  # To enable files, set read_write/read_only/write_only and specify a scoped root.
+  # Do not use '~': a LocalSystem service's HOME is its system profile.
   mode: disabled
+  # root: 'C:\Users\alice'
 
 vnc:
   engine: libvncserver

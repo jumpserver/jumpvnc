@@ -78,7 +78,7 @@ func (t *windowsTray) refreshPanelSettings(keepDraft bool) {
 		if t.registration != nil {
 			setControlText(p.compatibility, "VNC 兼容入口：系统服务模式关闭此入口")
 		}
-		p.rootEnabled = cfg.SFTP.Mode != "disabled" && t.registration == nil
+		p.rootEnabled = cfg.SFTP.Mode != "disabled"
 		setControlText(p.rootLabel, "根目录  ·  "+sftpModeLabel(cfg.SFTP.Mode))
 		p.savedRoot = cfg.SFTP.Root
 		if p.savedRoot == "" {
@@ -89,6 +89,9 @@ func (t *windowsTray) refreshPanelSettings(keepDraft bool) {
 		}
 		setControlText(p.rootDirectory, "")
 		hint := rootPathHint
+		if t.registration != nil {
+			hint = "指定文件目录，不使用系统服务的 HOME。保存后重启生效。"
+		}
 		if p.rootEnabled {
 			if root, err := cfg.SFTP.RootDirectory(t.configPath); err == nil {
 				setControlText(p.rootDirectory, "解析后："+root)
@@ -97,15 +100,12 @@ func (t *windowsTray) refreshPanelSettings(keepDraft bool) {
 			}
 		} else {
 			hint = "SFTP 已关闭，可在 YAML 配置中启用。"
-			if t.registration != nil {
-				hint = "系统服务模式关闭 SFTP。"
-			}
 		}
 		setControlText(p.rootHint, hint)
 	}
 	setControlEnabled(p.rootInput, p.rootEnabled)
 	setControlEnabled(p.rootBrowse, p.rootEnabled)
-	setControlEnabled(p.rootHome, p.rootEnabled)
+	setControlEnabled(p.rootHome, p.rootEnabled && t.registration == nil)
 	setControlEnabled(p.compatibilityToggle, p.compatibilityAllowed)
 	p.updateRootSave()
 }
@@ -160,6 +160,10 @@ func (t *windowsTray) savePanelRoot() {
 	p := &t.panel
 	root := controlText(p.rootInput)
 	if !p.rootEnabled || root == p.savedRoot || strings.TrimSpace(root) == "" {
+		return
+	}
+	if t.registration != nil && !filepath.IsAbs(root) {
+		showTrayError(p.window, "无法保存 SFTP 根目录", errors.New("系统服务模式请指定完整目录路径，不使用 HOME"))
 		return
 	}
 	if err := writeSFTPRoot(t.configPath, root); err != nil {

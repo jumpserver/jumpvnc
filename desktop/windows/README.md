@@ -24,7 +24,7 @@ Windows x64 需要 Visual Studio 2022 C++ Build Tools、Windows SDK、CMake、NA
 
 ## 配置与部署
 
-SFTP 默认以运行账户的 `USERPROFILE` 为根目录，配置写 `root: "~"` 或省略 `root` 即可。Agent 配置、主机私钥、VNC 密码和桌面后端需放在 HOME 外，例如 `C:\ProgramData\SVNC`；仍支持明确配置其他根目录。右侧文件栏显示实际上传位置，进入子目录后上传到当前目录。
+交互模式的 SFTP 默认以运行账户的 `USERPROFILE` 为根目录，配置写 `root: "~"` 或省略 `root` 即可。系统服务模式必须指定独立于服务账户 HOME 的文件目录，例如 `root: 'C:\Users\alice'`，并显式设置 `sftp.mode`。文件操作使用 Agent 的服务账户权限，由 `os.Root` 限定在配置的目录内；系统服务不自动跟随当前登录用户切换文件根目录。Agent 配置、主机私钥、VNC 密码和桌面后端需放在 SFTP 根目录之外，例如 `C:\ProgramData\SVNC`。右侧文件栏显示实际上传位置，进入子目录后上传到当前目录。
 
 在仓库根目录构建 Agent：
 
@@ -56,7 +56,7 @@ vnc:
 
 已安装 Windows 系统服务时，在交互式桌面直接启动 Agent 会自动进入服务管理模式，不再启动另一份桌面后端。未安装系统服务时，保留原有的独立托盘模式。双击通知区域中的 `JumpVNC Server` 图标即可打开管理窗口。窗口显示服务状态和当前 YAML 配置文件的路径，可以启动、停止、重启服务，或用记事本编辑配置。保存后重启服务即可应用新配置。如果服务已停止，选「启动服务」。启动失败或后端意外退出时，可选「查看错误」后重试。
 
-以下 SFTP 和兼容入口设置用于独立托盘模式；系统服务管理窗口会禁用这两项。
+SFTP 根目录可在独立托盘或系统服务管理窗口中设置；系统服务需要管理员权限且不提供「使用 HOME」。普通 VNC 兼容入口仅用于独立托盘模式。
 
 「连接配置」显示配置中的 SSH 监听、VNC 后端、普通 VNC 兼容入口和 SSH 登录用户名，也显示实际启动 Agent 的 Windows 运行用户。SSH 登录用户名可通过 YAML 的 `ssh.user` 修改，客户端连接时需使用新用户名。Windows 运行用户由启动 Agent 的桌面会话或计划任务决定。用「开启兼容」或「关闭兼容」可保存普通 VNC 入口开关，重启后生效。兼容入口使用 VNC 密码，流量未经 SSH 加密。
 
@@ -76,7 +76,7 @@ vnc:
 
 服务显示名称为 `JumpVNC Server`；内部服务名 `SuperVNC` 和安装目录沿用旧标识，以兼容已有部署。
 
-安装脚本默认同时配置登录后自动显示托盘，以及开始菜单中的 **JumpVNC Server** 入口。托盘读取系统服务的实际状态，可启动、停止、重启服务、修改 VNC 密码、编辑 `service.yaml` 和查看服务日志；关闭管理窗口只隐藏窗口，退出托盘或注销用户不会停止后台系统服务。配置和密码修改后需重启服务。普通用户可以查看服务状态；点击「以管理员身份管理」经 Windows UAC 授权后进行控制和配置。SFTP 与普通 VNC 入口继续保持关闭。
+安装脚本默认同时配置登录后自动显示托盘，以及开始菜单中的 **JumpVNC Server** 入口。托盘读取系统服务的实际状态，可启动、停止、重启服务、修改 VNC 密码、编辑 `service.yaml` 和查看服务日志；关闭管理窗口只隐藏窗口，退出托盘或注销用户不会停止后台系统服务。配置和密码修改后需重启服务。普通用户可以查看服务状态；点击「以管理员身份管理」经 Windows UAC 授权后进行控制和配置。SFTP 默认关闭，可在 YAML 中设置访问模式及明确的文件根目录后启用。普通 VNC 入口保持关闭。
 
 已有服务可以单独安装托盘登录入口：
 
@@ -89,7 +89,7 @@ vnc:
 托盘总是使用 Windows 服务注册的配置路径，`-config` 不会更改它管理的文件。同一用户、同一桌面和权限级别只保留一个管理托盘，重复打开管理窗口会激活已有窗口。安装时加 `-NoTray` 可只安装后台服务。
 
 
-用管理员权限把发布包解压到 `%ProgramFiles%\SuperVNC`。将 [服务模式示例](../../configs/windows.service.example.yaml) 复制为部署目录下的 `service.yaml`，并准备 SSH 主机密钥、`authorized_keys` 和 `vnc-password.txt`。服务以 `LocalSystem` 运行，限制部署目录、配置引用的可执行文件及密钥文件的 ACL，只允许管理员和 SYSTEM 修改。服务模式要求使用 SSH/SVNC 和 `libvncserver` 后端，配置中关闭普通 VNC 兼容入口与 SFTP。回环后端只接受来自 Agent 进程的连接。若已有托盘或计划任务占用同一端口，先停止相应实例。
+用管理员权限把发布包解压到 `%ProgramFiles%\SuperVNC`。将 [服务模式示例](../../configs/windows.service.example.yaml) 复制为部署目录下的 `service.yaml`，并准备 SSH 主机密钥、`authorized_keys` 和 `vnc-password.txt`。服务以 `LocalSystem` 运行，限制部署目录、配置引用的可执行文件及密钥文件的 ACL，只允许管理员和 SYSTEM 修改。服务模式要求使用 SSH/SVNC 和 `libvncserver` 后端，并关闭普通 VNC 兼容入口。SFTP 可按需配置，启用时不接受服务账户 HOME 作为文件根目录，原有目录隔离、凭据排除和访问模式限制继续生效。回环后端只接受来自 Agent 进程的连接。若已有托盘或计划任务占用同一端口，先停止相应实例。
 
 在部署目录打开管理员 PowerShell：
 
@@ -134,6 +134,8 @@ go test ./tests/integration -run TestLibVNCBackend -v -count=1
 该验收验证认证、无认证请求拒绝、禁用 RFB 文件传输、不完整握手回收、分包协商、Raw 画面、光标与 ExtendedClipboard 能力。真实键鼠、中文剪贴板双向同步及只读策略需要在独立临时测试窗口验收，避免向其他应用发送测试输入。LibVNCServer 0.9.15 的剪贴板广播 API 不过滤未认证客户端，本适配层在认证完成前延迟广播，并在 10 秒后回收未完成的握手。
 
 ## 2026-11-24 H.264 试用验收
+
+同日修复系统服务文件管理：原服务模式强制关闭 SFTP，导致客户端文件管理不可用。服务现在允许显式配置的 SFTP 根目录，同时拒绝服务账户 HOME、保留普通 VNC 兼容入口禁用及原有目录/凭据隔离策略。g15 恢复 `read_write`，根目录为 `C:\Users\Administrator`；实际目录浏览、上传、下载、内容比较、重命名和清理均通过，客户端文件管理已恢复，盘符越界请求被拒绝。Windows 原生服务策略及配置 ACL 测试通过。原 Agent 和配置备份在 `C:\Program Files\SuperVNC\backups\before-sftp-restore-20261124-144704`，H.264 桌面后端未替换。
 
 硬件编码补充：
 
