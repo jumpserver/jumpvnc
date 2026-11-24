@@ -6,14 +6,13 @@ ssh:
   allow_vnc: true
 
 sftp:
-  mode: read_write
-  root: "~" # Remote Agent user's USERPROFILE (also the default when omitted).
+  mode: disabled
+  # root: 'C:\Users\alice' # Set a file directory before enabling SFTP.
   max_file_size_mib: 1024
 
 vnc:
   compatibility:
-    enabled: false # Optional plain VNC Viewer access, without SSH encryption.
-    # listen: "0.0.0.0:5923" # Default when enabled: ssh.listen host and port + 1.
+    enabled: false
   engine: libvncserver
   listen: "127.0.0.1:5900"
   executable: backends/windows/svnc-desktop.exe

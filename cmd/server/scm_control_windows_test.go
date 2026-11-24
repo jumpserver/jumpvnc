@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/windows"
+
+	"sshvnc/internal/config"
 )
 
 // Runs in the logged-in user's session during explicit deployment acceptance.
@@ -47,18 +49,24 @@ func TestInstalledServiceTrayUI(t *testing.T) {
 		value, _, _ := user32.NewProc("IsWindowEnabled").Call(control)
 		return value != 0
 	}
-	if enabled(tray.panel.compatibilityToggle) || enabled(tray.panel.rootInput) {
-		t.Fatal("system-service panel offered unsupported access modes")
-	}
 	if !tray.canConfigure() {
-		if enabled(tray.panel.stop) || enabled(tray.panel.configEdit) || enabled(tray.panel.passwordShow) || enabled(tray.panel.passwordInput) {
+		if enabled(tray.panel.rootInput) || enabled(tray.panel.rootBrowse) || enabled(tray.panel.stop) || enabled(tray.panel.configEdit) || enabled(tray.panel.passwordShow) || enabled(tray.panel.passwordInput) {
 			t.Fatal("unelevated tray exposed privileged controls")
 		}
 		if !enabled(tray.panel.admin) {
 			t.Fatal("administrator management action is unavailable")
 		}
-	} else if !enabled(tray.panel.passwordInput) {
-		t.Fatal("administrator cannot configure the service password")
+	} else {
+		if !enabled(tray.panel.passwordInput) {
+			t.Fatal("administrator cannot configure the service password")
+		}
+		cfg, err := config.ReadSettings(registration.configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.SFTP.Mode != "disabled" && (!enabled(tray.panel.rootInput) || !enabled(tray.panel.rootBrowse)) {
+			t.Fatal("administrator cannot configure the enabled SFTP root")
+		}
 	}
 	t.Logf("notification icon and management controls passed; administrator=%t", tray.canConfigure())
 }

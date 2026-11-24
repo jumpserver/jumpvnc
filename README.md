@@ -39,7 +39,7 @@ vncpasswd "$state/vnc.passwd"
 
 ## Windows
 
-在已登录用户的交互会话中运行 `sshvnc.exe`。默认后端是 LibVNCServer + DXGI。双击托盘图标可打开管理窗口，查看状态、启停和重启服务、编辑配置或查看错误。系统服务安装后，用户登录时自动显示管理托盘，退出托盘后后台服务继续运行；启停和配置操作需要管理员权限。构建、系统服务和计划任务见 [Windows 部署说明](desktop/windows/README.md)，配置见 [Windows 示例](configs/windows.example.yaml)。
+Windows 默认安装为开机自动运行的系统服务，后端是 LibVNCServer + DXGI。用户登录后自动显示管理托盘，双击图标可查看状态、启停和重启服务、设置文件根目录、修改密码或编辑配置；退出托盘后后台服务继续运行。启停和配置操作需要管理员权限。构建与安装见 [Windows 部署说明](desktop/windows/README.md)，配置见 [Windows 示例](configs/windows.example.yaml)。
 
 ## 连接
 

@@ -24,7 +24,7 @@ Windows x64 需要 Visual Studio 2022 C++ Build Tools、Windows SDK、CMake、NA
 
 ## 配置与部署
 
-交互模式的 SFTP 默认以运行账户的 `USERPROFILE` 为根目录，配置写 `root: "~"` 或省略 `root` 即可。系统服务模式必须指定独立于服务账户 HOME 的文件目录，例如 `root: 'C:\Users\alice'`，并显式设置 `sftp.mode`。文件操作使用 Agent 的服务账户权限，由 `os.Root` 限定在配置的目录内；系统服务不自动跟随当前登录用户切换文件根目录。Agent 配置、主机私钥、VNC 密码和桌面后端需放在 SFTP 根目录之外，例如 `C:\ProgramData\SVNC`。右侧文件栏显示实际上传位置，进入子目录后上传到当前目录。
+Windows 默认安装为开机自动运行的系统服务。SFTP 默认关闭，启用时必须指定独立于服务账户 HOME 的文件目录，例如 `root: 'C:\Users\alice'`，并显式设置 `sftp.mode`。文件操作使用 Agent 的服务账户权限，由 `os.Root` 限定在配置的目录内；系统服务不自动跟随当前登录用户切换文件根目录。Agent 配置、主机私钥、VNC 密码和桌面后端需放在 SFTP 根目录之外，例如 `C:\ProgramData\SVNC`。右侧文件栏显示实际上传位置，进入子目录后上传到当前目录。
 
 在仓库根目录构建 Agent：
 
@@ -43,32 +43,15 @@ vnc:
   view_only: false
 ```
 
-在已登录用户的普通交互会话运行 Agent。可以从该桌面启动终端，也可以使用计划任务：
-
-```powershell
-.\deployments\windows\install.ps1 -Agent C:\svnc\sshvnc.exe -Config C:\svnc\config.yaml -Start
-# 明确需要登录时自动运行时，加 -AtLogon；默认仅注册手动任务。
-```
-
-任务以当前用户的 Limited 权限运行。安装脚本不覆盖已有任务；更新部署前先停止并删除对应任务，再注册。任务使用 Windows Job 管理 Agent 进程树，停止任务会回收后端。Agent 正常退出会停止后端；后端也监测 Agent PID，防止直接启动 Agent 后异常退出留下后端。
-
 ### 托盘控制
 
-已安装 Windows 系统服务时，在交互式桌面直接启动 Agent 会自动进入服务管理模式，不再启动另一份桌面后端。未安装系统服务时，保留原有的独立托盘模式。双击通知区域中的 `JumpVNC Server` 图标即可打开管理窗口。窗口显示服务状态和当前 YAML 配置文件的路径，可以启动、停止、重启服务，或用记事本编辑配置。保存后重启服务即可应用新配置。如果服务已停止，选「启动服务」。启动失败或后端意外退出时，可选「查看错误」后重试。
+用户登录后自动显示 `JumpVNC Server` 托盘。双击图标打开管理窗口，可启动、停止、重启服务、设置文件根目录、修改 VNC 密码、编辑配置和查看服务日志。更改配置后重启服务即可生效。
 
-SFTP 根目录可在独立托盘或系统服务管理窗口中设置；系统服务需要管理员权限且不提供「使用 HOME」。普通 VNC 兼容入口仅用于独立托盘模式。
+「连接配置」显示 SSH 监听、VNC 后端、SSH 登录用户名和 Windows 运行用户。启用 SFTP 后，可以输入完整根目录或用「浏览…」选择现有文件夹，再选「保存目录」。监听地址和 SFTP 访问模式通过「编辑配置」修改。
 
-「连接配置」显示配置中的 SSH 监听、VNC 后端、普通 VNC 兼容入口和 SSH 登录用户名，也显示实际启动 Agent 的 Windows 运行用户。SSH 登录用户名可通过 YAML 的 `ssh.user` 修改，客户端连接时需使用新用户名。Windows 运行用户由启动 Agent 的桌面会话或计划任务决定。用「开启兼容」或「关闭兼容」可保存普通 VNC 入口开关，重启后生效。兼容入口使用 VNC 密码，流量未经 SSH 加密。
+「显示密码」可以查看当前密码，切走或关闭窗口会再次遮住。在「新密码」中输入 1–8 个可打印 ASCII 字符，再选「保存密码」。更改目录或密码后，重启服务生效。
 
-启用 SFTP 时，可以输入或浏览选择现有根目录，也可用「使用 HOME」填入默认值 `~`，再选「保存目录」。窗口同时显示解析后的路径。相对路径以 YAML 文件所在目录为准，`~` 指 Windows 运行用户的 `USERPROFILE`。监听地址和 SFTP 访问模式可通过「编辑配置」在 YAML 中修改。
-
-使用托管的 LibVNCServer 后端时，「显示密码」可以查看当前密码，切走或关闭窗口会再次遮住。在「新密码」中输入 1–8 个可打印 ASCII 字符，再选「保存密码」，即可更新后端的密码文件。更改目录或密码后，重启服务生效。
-
-关闭管理窗口后，Agent 继续驻留在托盘。右键菜单也可打开管理窗口、控制服务和查看错误。停止服务会断开现有桌面和 SFTP 会话。要结束 Agent，可在右键菜单中选「退出 JumpVNC」。
-
-需要由计划任务在后端故障后自动重试时，注册任务时加 `-NoTray`。直接运行 Agent 时可加 `-no-tray`。非交互会话也使用此运行方式，服务失败时进程以非零状态退出。
-
-日志位于配置旁的 `<配置名>.agent.log`、`<配置名>.stdout.log` 和 `<配置名>.launcher-error.log`。注册启动器前，将部署目录的写权限限制给该账户和管理员。
+关闭管理窗口只隐藏窗口，退出托盘或注销用户不会停止后台服务。停止服务会断开桌面和 SFTP 会话。
 
 ### Windows 系统服务
 
@@ -94,13 +77,15 @@ SFTP 根目录可在独立托盘或系统服务管理窗口中设置；系统服
 在部署目录打开管理员 PowerShell：
 
 ```powershell
-.\deployments\windows\install-service.ps1 -Agent .\bin\sshvnc.exe -Config .\service.yaml -Start
+.\deployments\windows\install.ps1 -Agent .\bin\sshvnc.exe -Config .\service.yaml -Start
 Get-Service SuperVNC
 ```
 
 用 SVNC 连接。Windows 停留在登录或锁屏界面时，在原生界面输入 Windows 凭据。若目标要求 `Ctrl+Alt+Del`，使用 Viewer「设置」中的「发送 Ctrl+Alt+Del」，并在 Windows 组策略的「Windows 登录选项」里允许服务发送软件安全注意序列。服务通过 Windows `SendSAS` API 请求该操作，由 Windows 执行组策略。Agent 和抓屏日志分别写入 `service.yaml.service.log` 与 `service.yaml.desktop.log`。
 
 在目标机断开物理显示器并冷启动，全程不连接 RDP，依次验证登录界面、登录、锁屏与解锁、注销后的重新登录。还需验证崩溃重启与手动停止服务后端口回收。自动填写或保存 Windows 凭据尚未实现。
+
+开发调试需要以当前用户运行时，可显式使用 `deployments/windows/install-interactive.ps1` 注册交互任务。
 
 ## 支持范围
 
@@ -111,7 +96,7 @@ Get-Service SuperVNC
 - Windows 光标形状、热点、隐藏状态和位置通过 RFB 传输。半透明边缘与老式反色光标使用掩码近似，尚未覆盖所有自定义/动画光标。
 - DXGI 访问丢失后保留连接并清空旧画面，重试普通桌面抓屏。主屏分辨率变化通过 NewFBSize 通知支持的客户端，不支持的客户端需要重连。
 
-尚不支持多屏选择、旋转屏、虚拟屏、音频或 Windows 用户会话隔离。登录界面和安全桌面使用系统服务模式。普通交互任务在用户注销时结束，后续登录需手动启动或配置 `-AtLogon`。普通权限下的 `SendInput` 受 UIPI 限制。锁屏、休眠和分辨率变化仍需在目标设备做实机验收。
+尚不支持多屏选择、旋转屏、虚拟屏、音频或 Windows 用户会话隔离。登录界面和安全桌面使用系统服务模式。锁屏、休眠和分辨率变化仍需在目标设备做实机验收。
 
 抓屏最多约每 16ms 尝试一次，实际吞吐受画面变化、客户端请求、编码和网络影响。当前保持单线程持有 LibVNCServer 与帧缓冲，避免并发修改造成画面撕裂；尚未进行线程拆分和 DXGI dirty/move regions 优化，不宣称相比 UltraVNC 更快。
 
