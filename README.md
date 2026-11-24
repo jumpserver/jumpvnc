@@ -36,19 +36,96 @@ Linux 当前支持 X11，Windows 共享控制台桌面；多个连接访问同�
 | 服务端 | Linux（amd64 / arm64） | `jumpvnc-server-linux-amd64` / `jumpvnc-server-linux-arm64` |
 | 服务端 | Windows（amd64） | `jumpvnc-server-windows-amd64` |
 
-### 2. 启动服务端
+### 2. 安装服务端
 
-按目标机器的操作系统选择一种方式，并允许客户端访问服务端 TCP `5922`。服务端使用 SSH 公钥认证，需将客户端公钥加入服务端的 `authorized_keys`。
+以下使用下载包中的程序部署，无需安装 Go、Node.js 或编译工具。首次安装前，准备客户端的 SSH 公钥文件（如 `id_ed25519.pub`），私钥保留在客户端。服务端只需向客户端开放 TCP `5922`，内部 VNC 端口 `5900` 保持回环监听。
 
-#### Linux
+#### Windows：安装系统服务
 
-使用压缩包内置的 LibVNCServer + X11 后端，无需安装 TigerVNC 或 Go。目标系统需要兼容的运行库；Debian 13 可安装：
+**准备环境。** 目标机器需要 Microsoft Visual C++ x64 运行库，以及提供 `ssh-keygen` 的 Windows OpenSSH 客户端。用管理员权限将下载包中的 `bin`、`backends`、`configs`、`deployments` 等目录解压到 `C:\Program Files\SuperVNC`。以下命令在同一个**管理员 PowerShell** 窗口中执行，仅用于首次安装。
+
+**准备配置与凭据。** 将 `C:\Temp\client.pub` 替换为客户端公钥的实际位置：
+
+```powershell
+$ErrorActionPreference = 'Stop'
+Set-Location "$env:ProgramFiles\SuperVNC"
+
+# 限制安装目录和文件的访问；安装脚本会单独授予托盘程序运行权限。
+icacls.exe . /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /T
+Copy-Item .\configs\windows.service.example.yaml .\service.yaml
+Copy-Item C:\Temp\client.pub .\authorized_keys
+
+ssh-keygen.exe -t ed25519 -f .\ssh_host_ed25519_key
+```
+
+生成的是**服务端主机密钥**，两次口令提示均直接按回车，不设置口令，以便系统服务自动启动。接着设置独立的 VNC 密码：
+
+```powershell
+$vncPassword = [System.Net.NetworkCredential]::new('', (Read-Host '设置 VNC 密码（1–8 个可打印 ASCII 字符）' -AsSecureString)).Password
+if ($vncPassword -notmatch '^[\x20-\x7E]{1,8}$') { throw 'VNC 密码必须为 1–8 个可打印 ASCII 字符' }
+Set-Content -LiteralPath .\vnc-password.txt -Value $vncPassword -Encoding ascii
+Remove-Variable vncPassword
+
+ssh-keygen.exe -lf .\ssh_host_ed25519_key.pub
+```
+
+保存最后输出的主机密钥指纹，供客户端首次连接时核对。`authorized_keys` 中配置的公钥用于 SSH 认证，VNC 密码用于桌面认证；SSH 用户名默认为 `vncuser`，不是 Windows 登录账号。
+
+**启用文件上传下载。** 创建专用文件目录：
+
+```powershell
+New-Item -ItemType Directory -Force C:\JumpVNC-Files
+icacls.exe C:\JumpVNC-Files /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'
+notepad.exe .\service.yaml
+```
+
+将 `service.yaml` 中的 `sftp` 部分替换为以下内容，保存后关闭编辑器：
+
+```yaml
+sftp:
+  mode: read_write
+  root: 'C:\JumpVNC-Files'
+```
+
+服务以 `LocalSystem` 运行，文件操作使用该服务账户的权限。文件根目录按实际需要配置，不会随登录用户自动切换；不要包含安装目录、配置或凭据。无需文件传输时，保留默认的 `mode: disabled`。
+
+**安装并启动。** 保留示例配置中的回环 VNC 地址和关闭状态的普通 VNC 入口，然后执行：
+
+```powershell
+Get-ChildItem .\deployments\windows\*.ps1 | Unblock-File
+.\deployments\windows\install.ps1 -Agent .\bin\sshvnc.exe -Config .\service.yaml -Start
+Get-Service SuperVNC
+```
+
+状态应为 `Running`。服务显示名为 **JumpVNC Server**，内部服务名及安装目录沿用 `SuperVNC`。安装后开机自动运行，用户登录后自动显示管理托盘；也可从开始菜单打开 **JumpVNC Server**。
+
+按实际访问来源配置防火墙和安全组。例如，仅允许本地子网访问：
+
+```powershell
+New-NetFirewallRule -DisplayName 'JumpVNC SSH' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5922 -RemoteAddress LocalSubnet
+```
+
+跨网段或通过 VPN 访问时，将 `LocalSubnet` 改为实际客户端 IP 或网段。
+
+**日常管理。** 双击托盘可查看状态、启停服务、设置文件目录、修改密码或编辑配置；配置操作需要管理员权限，修改后重启服务生效。退出托盘不会停止服务。
+
+```powershell
+Restart-Service SuperVNC
+Get-Content .\service.yaml.service.log -Tail 50
+Get-Content .\service.yaml.desktop.log -Tail 50
+```
+
+升级时先停止服务，备份安装目录，再替换程序并启动服务。保留 `service.yaml`、主机密钥、`authorized_keys` 和 VNC 密码，已有服务无需重复安装。Windows 登录或锁屏界面仍需输入 Windows 账号凭据；若要求 `Ctrl+Alt+Del`，在 Viewer 中选择“发送 Ctrl+Alt+Del”，并按 Windows 组策略允许服务发送该操作。
+
+#### Linux：安装 X11 桌面服务
+
+使用下载包内置的 LibVNCServer + X11 后端。目标系统需要兼容的运行库；Debian 13 可安装：
 
 ```bash
 sudo apt-get install openssh-client libvncserver1 libx11-6 libxtst6 libxfixes3
 ```
 
-解压服务端压缩包，在包含 `bin`、`backends` 和 `configs` 的目录打开 Bash。首次部署执行以下命令，将 `/path/to/client.pub` 换成客户端的 SSH 公钥路径：
+在已登录的 X11 桌面中，以当前桌面用户打开 Bash。解压服务端压缩包，进入包含 `bin`、`backends`、`configs` 和 `deployments` 的目录。首次部署执行以下命令，将 `/path/to/client.pub` 换成客户端的 SSH 公钥路径：
 
 ```bash
 sudo install -D -m 755 bin/sshvnc /opt/jumpvnc/bin/sshvnc
@@ -65,21 +142,32 @@ read -r -s -p '设置 VNC 密码（1–8 个可打印 ASCII 字符）: ' vnc_pas
 printf '\n'
 printf '%s\n' "$vnc_password" > "$state/vnc-password.txt"
 unset vnc_password
-
-/opt/jumpvnc/bin/sshvnc -config "$state/config.yaml"
+ssh-keygen -lf "$state/ssh_host_ed25519_key.pub"
 ```
 
-在已登录的 X11 桌面中，以当前桌面用户运行最后一条命令即可启动，后续沿用已有配置和主机密钥。SFTP 默认访问运行用户的主目录；配置、密钥、密码和后端程序应放在 SFTP 根目录之外。
+保存主机密钥指纹，接着安装 systemd 用户服务，使其随图形会话运行并在异常退出后重启：
 
-#### Windows
-
-将服务端压缩包解压到 `%ProgramFiles%\SuperVNC`，按 [Windows 部署说明](desktop/windows/README.md#配置与部署) 准备 `service.yaml`、SSH 主机密钥、客户端公钥和 VNC 密码。在部署目录打开管理员 PowerShell：
-
-```powershell
-.\deployments\windows\install.ps1 -Agent .\bin\sshvnc.exe -Config .\service.yaml -Start
+```bash
+mkdir -p "$HOME/.config/systemd/user"
+cp deployments/sshvnc.service "$HOME/.config/systemd/user/sshvnc.service"
+sed -i 's|%h/.local/bin/sshvnc|/opt/jumpvnc/bin/sshvnc|' "$HOME/.config/systemd/user/sshvnc.service"
+systemctl --user daemon-reload
+systemctl --user import-environment DISPLAY XAUTHORITY
+systemctl --user add-wants graphical-session.target sshvnc.service
+systemctl --user start sshvnc.service
+systemctl --user status sshvnc.service
 ```
 
-服务随系统启动，用户登录后自动显示管理托盘。双击托盘可查看状态、启停服务、修改密码或编辑配置。Windows 服务默认关闭文件传输；需要时在 `service.yaml` 中设置 `sftp.mode: read_write` 和明确的 `sftp.root` 文件根目录，再重启服务。
+此方式依赖已登录的 X11 图形会话，不提供登录前桌面。桌面环境需启动 `graphical-session.target` 并向用户服务导入 `DISPLAY` 和 `XAUTHORITY`；重新登录后应确认服务和桌面连接正常。无显示器或需开机即运行的独立桌面，见 [Xvfb 部署说明](deployments/linux/README.md)。
+
+SFTP 默认访问运行用户的主目录，可在 `config.yaml` 中调整 `sftp.root` 和 `sftp.mode`。配置、密钥、密码和程序放在 SFTP 根目录之外。日常管理使用：
+
+```bash
+systemctl --user restart sshvnc.service
+journalctl --user -u sshvnc.service -n 50
+```
+
+升级时先停止用户服务，备份后替换 `/opt/jumpvnc` 中的程序，保留 `/var/lib/sshvnc/$USER` 中的配置和凭据，再启动服务。
 
 ### 3. 连接桌面与传输文件
 
