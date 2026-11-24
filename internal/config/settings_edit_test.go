@@ -40,3 +40,22 @@ func TestWithVNCCompatibility(t *testing.T) {
 		t.Fatal("enabled a port that is already assigned to the VNC backend")
 	}
 }
+
+func TestSSHPanelEditKeepsAuthorizationAndPolicy(t *testing.T) {
+	original := []byte("# keep this comment\nssh:\n  user: original\n  host_key_file: host\n  authorized_keys_file: keys\n  allow_vnc: true\nsftp:\n  mode: disabled\n")
+	updated, err := WithSSHSettings(original, "0.0.0.0:15922", "new-user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := decodeSettings(bytes.NewReader(original))
+	after, err := decodeSettings(bytes.NewReader(updated))
+	before.SSH.Listen, before.SSH.User = "0.0.0.0:15922", "new-user"
+	if err != nil || after != before || !strings.Contains(string(updated), "# keep this comment") {
+		t.Fatal("editing connection settings changed authorization or another policy")
+	}
+	for _, address := range []string{"0.0.0.0", "0.0.0.0:0", "0.0.0.0:65536", "0.0.0.0:abc"} {
+		if _, err := WithSSHSettings(original, address, "user"); err == nil {
+			t.Fatalf("accepted unusable listener %q", address)
+		}
+	}
+}

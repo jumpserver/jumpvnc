@@ -32,7 +32,7 @@ until_ready() {
     return 1
 }
 
-Xvfb -displayfd 3 -nolisten tcp -screen 0 800x600x24 3>"$tmp/desktop" >"$tmp/desktop.log" 2>&1 &
+Xvfb -displayfd 3 -nolisten tcp -screen 0 "${SVNC_TEST_DESKTOP_GEOMETRY:-800x600x24}" 3>"$tmp/desktop" >"$tmp/desktop.log" 2>&1 &
 pids+=("$!")
 Xvfb -displayfd 3 -nolisten tcp -screen 0 1024x768x24 3>"$tmp/viewer" >"$tmp/viewer-x.log" 2>&1 &
 pids+=("$!")
@@ -128,6 +128,14 @@ if [[ -n ${SVNC_TEST_LIBVNC_BACKEND:-} ]]; then
     if [[ -n ${SVNC_RFB_TEST_BINARY:-} ]]; then
         SVNC_RFB_ADDRESS=127.0.0.1:15900 SVNC_RFB_PASSWORD_FILE="$tmp/vnc-password.txt" \
             "$SVNC_RFB_TEST_BINARY" -test.run '^TestLibVNCBackend$' -test.v
+        if [[ ${SVNC_TEST_H264:-0} == 1 ]]; then
+            SVNC_TEST_H264_DECODE=1 SVNC_RFB_H264_ADDRESS=127.0.0.1:15900 SVNC_RFB_PASSWORD_FILE="$tmp/vnc-password.txt" \
+                "$SVNC_RFB_TEST_BINARY" -test.run '^TestLibVNCH264' -test.v
+        fi
+        if [[ ${SVNC_TEST_H264_ODD_GEOMETRY:-0} == 1 ]]; then
+            SVNC_RFB_H264_ADDRESS=127.0.0.1:15900 SVNC_RFB_PASSWORD_FILE="$tmp/vnc-password.txt" \
+                "$SVNC_RFB_TEST_BINARY" -test.run '^TestLibVNCH264UnsupportedGeometry$' -test.v
+        fi
     fi
 fi
 

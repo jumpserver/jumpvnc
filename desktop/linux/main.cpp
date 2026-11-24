@@ -8,6 +8,7 @@
 #include <X11/extensions/Xfixes.h>
 #include <X11/keysym.h>
 #include <rfb/rfb.h>
+#include "h264_bridge.h"
 #include <algorithm>
 #include <arpa/inet.h>
 #include <chrono>
@@ -121,6 +122,7 @@ static void releaseKeys(rfbClientPtr cl) {
     XFlush(display);
 }
 static void disconnected(rfbClientPtr cl) {
+    svncH264Reset(cl);
     releaseKeys(cl);
     delete static_cast<ClientInput *>(cl->clientData);
     cl->clientData = nullptr;

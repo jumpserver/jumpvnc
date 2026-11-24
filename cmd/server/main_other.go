@@ -19,3 +19,7 @@ func runWindowsService(context.Context, string) error {
 func runServiceManager(context.Context, bool, *slog.Logger) error {
 	return errors.New("service management requires Windows")
 }
+
+func initializeWindowsService(string) error {
+	return errors.New("service initialization requires Windows")
+}

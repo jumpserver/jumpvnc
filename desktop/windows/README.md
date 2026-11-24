@@ -1,5 +1,7 @@
 # JumpVNC Server Windows 桌面后端
 
+日常部署请使用 [项目首页的双击安装方式](../../README.md#windows双击安装)。本页保留后端构建、手动部署和协议验收细节。
+
 `svnc-desktop.exe` 使用 LibVNCServer 0.9.15、libjpeg-turbo 和 DXGI Desktop Duplication，共享当前登录用户的主屏。Go Agent 管理后端生命周期，并提供 SSH 转发、SFTP、授权和审计。文件传输只使用 SFTP；后端禁用 UltraVNC 文件传输，不编译 TightVNC 文件扩展。
 
 支持客户端默认优先请求的 H.264 视频模式：RFB 编码 50（与 LibVNCServer 头文件中的 `rfbEncodingH264` 不是同一种封装），通过原 SSH 桌面通道传输。优先枚举 Media Foundation 硬件编码器，初始化或运行失败时回退 Windows 内置的同步软件编码器。图像使用 NV12 / 4:2:0、Baseline、无 B 帧，平均码率目标 6 Mbps、最高 30 FPS；尚未提供自适应码率或 UDP 媒体通道。请求码率和驱动回读不代表严格的输出上限，实际流量应单独采样。只在画面变化或客户端请求刷新时编码，最多两个视频客户端，支持正偶数尺寸且不超过 4096×2160；不满足条件时保留原 RFB 编码协商。软件编码也失败时先发送一个 Raw 矩形以保持已宣布的矩形数量一致，随后回退普通编码。
@@ -7,6 +9,10 @@
 硬件 MFT 解锁异步接口后按 NeedInput / HaveOutput 事件处理，应用最多保留一幅在途画面；首帧事件等待上限为 1 秒，后续为 200 ms，超时回退软件。驱动 API 调用本身不受这些事件等待上限约束。失败后销毁硬件实例，用同一幅 NV12 图像重试软件 IDR，并通知 RFB 重置客户端解码上下文。格式协商后重新应用码率控制并记录可用的属性回读。采集回读和 BGRA → NV12 转换仍在 CPU 上，没有实现 DXGI 纹理直接送编码器。当前实机验证了 NVIDIA RTX 3060 Laptop GPU；其他厂商驱动需单独验收。
 
 `h264.cmake` 为固定版本的 LibVNCServer 在构建目录生成编码协商/发送的覆盖源文件，不修改依赖检出；原源码钩子不匹配时构建失败。每个视频客户端独立维护编码上下文，重连、重新协商、尺寸改变或硬件回退时重建，并在新编码流首帧携带解码上下文重置标志。完整帧按顺序编码，不排队保存历史画面。`h264.config`、`h264.ready`、`h264.hardware_unavailable`、`h264.hardware_failed`、`h264.unavailable`、`h264.failed`、`h264.stats` 日志可用于排查编码器、码率和编码耗时；`hardware=1` 表示当前使用硬件 MFT，`hardware=0` 表示软件。
+
+光标独立于桌面视频传输。通过黑/白背景的 Windows 原生光标合成恢复 Alpha 与未预乘颜色；客户端声明 VMware Cursor 伪编码 `0x574d5664` 时发送 subtype 1 的 RGBA 光标，保留自定义图案、半透明边缘和阴影。能力按连接保存，重新协商和断开时清空；旧客户端继续使用 RichCursor/XCursor 的二值遮罩。此扩展与 H.264 编码、画质选项无关。
+
+Windows 键盘通过 `SendInput` 的扫描码方式注入，包含退格、删除、导航键、修饰键和小键盘；主回车与小键盘回车分别跟踪，导航区和右侧修饰键保留 E0 标记。Pause 保留虚拟键回退，Unicode 文本仍走 Unicode 输入。避免只发送虚拟键码时，模拟器的键盘钩子收不到有效扫描码。`Ctrl+Alt+Del` 继续走系统服务的 SAS 通道。
 
 ## 构建
 
@@ -21,6 +27,16 @@ Windows x64 需要 Visual Studio 2022 C++ Build Tools、Windows SDK、CMake、NA
 ```
 
 可用 `-Dependencies C:\path\to\sources` 指向已准备的源码。输出为 `build\Release\svnc-desktop.exe`。构建使用动态 MSVC CRT，目标 Windows 需要匹配的 x64 Visual C++ 运行库。不要使用实验目录的旧二进制；正式后端有独立的命令行参数和权限控制。
+
+不操作当前桌面的光标/按键检查：
+
+```powershell
+cmake --build build --config Release --target input-smoke cursor-smoke
+.\build\Release\input-smoke.exe
+.\build\Release\cursor-smoke.exe
+```
+
+通过回环 SSH 隧道验证实际 Alpha 协商和回退：设置 `SVNC_RFB_ALPHA_ADDRESS`、`SVNC_RFB_PASSWORD_FILE`，运行 `go test ./tests/integration -run TestLibVNCAlphaCursor -v -count=1`。该检查只读，不移动鼠标、不注入按键、不改写剪贴板。
 
 ## 配置与部署
 

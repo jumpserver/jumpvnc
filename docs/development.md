@@ -73,3 +73,16 @@ go vet ./...
 
 - [SVNC 接入协议](protocol.md)：SSH 子系统、桌面与文件权限、兼容方式及 JumpServer / Guacamole 集成约定；当前为 v0.1 草案。
 - [`.svnc` 连接文件格式](connection-file.md)：连接配置的导入、导出与共享。
+
+## Windows 安装程序
+
+`deployments/windows/installer/jumpvnc.iss` 使用 Inno Setup 6 将 Windows 服务端目录打包为安装程序，自动准备 Microsoft Visual C++ 运行库、初始化随机凭据、注册服务和托盘、添加程序防火墙规则。编译前由 `build.ps1` 核验运行库安装包的 Microsoft 数字签名。
+
+CI 在完成后端构建及打包后执行：
+
+```powershell
+.\deployments\windows\installer\build.ps1 -Version 0.1.0
+.\deployments\windows\installer\test.ps1 -Installer .\dist\jumpvnc-server-windows-amd64-setup.exe
+```
+
+安装验收仅在一次性 Windows 构建环境运行，覆盖首次安装、升级保留凭据、管理窗口复制动作、截图和卸载保留配置。`/NoStartService=1` 仅用于该验收环境；正常安装自动启动服务。初始化不会覆盖已有配置、授权公钥、主机密钥或密码；连接密钥与主机密钥分别生成，私钥和配置只允许管理员及 SYSTEM 读取。

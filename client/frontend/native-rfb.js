@@ -1,22 +1,4 @@
-// RFB cursor pixels use framebuffer coordinates, while browser cursors use CSS
-// pixels. Keep both the shape and its hotspot aligned with the scaled desktop.
-function scaleCursor(image, scale) {
-  if (!image.w || !image.h || !Number.isFinite(scale) || scale <= 0 || scale === 1) return image;
-  const w = Math.max(1, Math.round(image.w * scale));
-  const h = Math.max(1, Math.round(image.h * scale));
-  const rgbaPixels = new Uint8Array(w * h * 4);
-  for (let y = 0; y < h; y++) {
-    const sy = Math.min(image.h - 1, Math.floor((y + 0.5) * image.h / h));
-    for (let x = 0; x < w; x++) {
-      const sx = Math.min(image.w - 1, Math.floor((x + 0.5) * image.w / w));
-      const source = (sy * image.w + sx) * 4;
-      rgbaPixels.set(image.rgbaPixels.subarray(source, source + 4), (y * w + x) * 4);
-    }
-  }
-  return { rgbaPixels, w, h,
-    hotx: Math.min(w - 1, Math.round(image.hotx * w / image.w)),
-    hoty: Math.min(h - 1, Math.round(image.hoty * h / image.h)) };
-}
+import { scaleCursor, densityCursor } from './cursor-image.js';
 
 // Compatibility adapter for the pinned noVNC 1.7.0 and native LibVNCServer backends.
 export function nativeRFB(BaseRFB) {
@@ -31,6 +13,7 @@ export function nativeRFB(BaseRFB) {
           ['ctrlKey', 'ControlLeft', 'ControlRight', 0xffe3],
           ['metaKey', 'MetaLeft', 'MetaRight', 0xffeb],
         ];
+        if (this.commandAsControl) mappings.push(['altKey', 'AltLeft', 'AltRight', 0xffe9]);
         // Release old modifiers first: Command and Control can map to the
         // same remote key when switching between successive shortcuts.
         for (const [flag, left, right] of mappings) {
@@ -59,11 +42,26 @@ export function nativeRFB(BaseRFB) {
       // Keep noVNC's local dot fallback at its normal CSS size.
       if (!original || this._shouldShowDotCursor()) return super._refreshCursor();
       const scale = this._display?.scale ?? 1;
-      if (this._nativeCursor?.image !== original || this._nativeCursor.scale !== scale) {
-        this._nativeCursor = { image: original, scale, scaled: scaleCursor(original, scale) };
+      const density = globalThis.devicePixelRatio || 1;
+      if (this._nativeCursor?.image !== original || this._nativeCursor.scale !== scale || this._nativeCursor.density !== density) {
+        this._nativeCursor = { image: original, scale, density, scaled: scaleCursor(original, scale) };
       }
       this._cursorImage = this._nativeCursor.scaled;
-      try { return super._refreshCursor(); }
+      try {
+        const result = super._refreshCursor();
+        const target = this._cursor?._target;
+        // noVNC's native cursor path uses a PNG URL. Keep touch/fallback
+        // overlays untouched; image-set gives native Retina cursors real pixels
+        // without doubling their CSS size or their click hotspot.
+        if (density > 1 && original.w && original.h && target?.style.cursor.startsWith('url(') && globalThis.CSS?.supports) {
+          if (this._nativeCursor.css === undefined) {
+            const high = scaleCursor(original, scale * density);
+            this._nativeCursor.css = densityCursor(high, density, this._nativeCursor.scaled, document, CSS.supports.bind(CSS));
+          }
+          if (this._nativeCursor.css) target.style.cursor = this._nativeCursor.css;
+        }
+        return result;
+      }
       finally { this._cursorImage = original; }
     }
 
@@ -72,12 +70,24 @@ export function nativeRFB(BaseRFB) {
       this._refreshCursor();
     }
 
+    _handleVMwareCursor() {
+      // Both the subtype and its padding must arrive before noVNC consumes
+      // either byte, including when SSH/WebSocket splits a cursor update.
+      if (this._sock.rQwait('VMware cursor header', 2)) return false;
+      return super._handleVMwareCursor();
+    }
+
     _handleKeyEvent(keysym, code, down, ...locks) {
       // A Mac's Command shortcuts should operate the Windows/Linux desktop.
       // Change the physical code too: QEMU key events use it, not the keysym.
       if (this.commandAsControl && (code === 'MetaLeft' || code === 'MetaRight')) {
         code = code === 'MetaLeft' ? 'ControlLeft' : 'ControlRight';
         keysym = code === 'ControlLeft' ? 0xffe3 : 0xffe4;
+      }
+      // noVNC maps Mac Option to Mode_switch/ISO_Level3_Shift. Native Windows
+      // desktops need actual Alt events for shortcuts and modifier release.
+      if (this.commandAsControl && (code === 'AltLeft' || code === 'AltRight')) {
+        keysym = code === 'AltLeft' ? 0xffe9 : 0xffea;
       }
       this._nativeControls ??= new Set();
       if (code === 'ControlLeft' || code === 'ControlRight') {

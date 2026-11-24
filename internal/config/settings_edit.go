@@ -4,10 +4,94 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net"
+	"os"
 	"strconv"
 
 	"go.yaml.in/yaml/v3"
 )
+
+// WithSSHSettings preserves policy, credentials and other YAML settings.
+func WithSSHSettings(original []byte, listen, user string) ([]byte, error) {
+	_, port, err := net.SplitHostPort(listen)
+	number, portErr := strconv.Atoi(port)
+	if err != nil || portErr != nil || number < 1 || number > 65535 {
+		return nil, errors.New("SSH 监听地址须包含 1–65535 的端口，例如 0.0.0.0:5922")
+	}
+	before, err := decodeSettings(bytes.NewReader(original))
+	if err != nil {
+		return nil, err
+	}
+	document, err := yamlSettings(original)
+	if err != nil {
+		return nil, err
+	}
+	section, err := yamlSettingsSection(document.Content[0], "ssh", before.SSH)
+	if err != nil {
+		return nil, err
+	}
+	setStringSetting(section, "listen", listen)
+	setStringSetting(section, "user", user)
+	before.SSH.Listen, before.SSH.User = listen, user
+	return checkedSettingsEdit(document, before)
+}
+
+// WithSFTPSettings allows the manager to enable or disable file access while
+// enforcing the same path isolation as a server startup.
+func WithSFTPSettings(name string, original []byte, mode, root string) ([]byte, error) {
+	before, err := decodeSettings(bytes.NewReader(original))
+	if err != nil {
+		return nil, err
+	}
+	document, err := yamlSettings(original)
+	if err != nil {
+		return nil, err
+	}
+	section, err := yamlSettingsSection(document.Content[0], "sftp", before.SFTP)
+	if err != nil {
+		return nil, err
+	}
+	setStringSetting(section, "mode", mode)
+	setStringSetting(section, "root", root)
+	before.SFTP.Mode, before.SFTP.Root = mode, root
+	updated, err := checkedSettingsEdit(document, before)
+	if err != nil || mode == "disabled" {
+		return updated, err
+	}
+	resolved, err := before.resolvePaths(name)
+	if err != nil {
+		return nil, err
+	}
+	directory, err := os.OpenRoot(resolved.SFTP.Root)
+	if err != nil {
+		return nil, err
+	}
+	if err := directory.Close(); err != nil {
+		return nil, err
+	}
+	return updated, nil
+}
+
+func setStringSetting(section *yaml.Node, key, value string) {
+	entry := yamlField(section, key)
+	entry.Kind, entry.Tag, entry.Value, entry.Style = yaml.ScalarNode, "!!str", value, yaml.SingleQuotedStyle
+	entry.Alias, entry.Content = nil, nil
+}
+
+func checkedSettingsEdit(document *yaml.Node, expected Config) ([]byte, error) {
+	updated, err := encodeYAMLSettings(document)
+	if err != nil {
+		return nil, err
+	}
+	after, err := decodeSettings(bytes.NewReader(updated))
+	if err != nil {
+		return nil, err
+	}
+	if after != expected {
+		return nil, errors.New("设置与其他字段共用 YAML 锚点，请使用高级配置编辑")
+	}
+	return updated, nil
+}
 
 // WithVNCCompatibility changes only whether the ordinary VNC listener is enabled.
 func WithVNCCompatibility(original []byte, enabled bool) ([]byte, error) {

@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cwchar>
+#include "cursor_pixels.h"
 
 struct Options {
     int port = 0;
@@ -316,21 +317,18 @@ static void pollCursor(rfbScreenInfoPtr screen) {
         memset(bits, 255, (size_t)w * h * 4);
         DrawIconEx(dc, 0, 0, handle, w, h, 0, nullptr, DI_NORMAL);
         std::vector<char> source(w * h, ' '), mask(w * h, ' ');
+        std::vector<unsigned char> alpha(w * h);
         auto white = (unsigned char *)bits;
-        for (int i = 0; i < w * h; ++i) {
-            bool transparent = true;
-            for (int c = 0; c < 3; ++c)
-                if (pixels[i * 4 + c] != 0 || white[i * 4 + c] != 255)
-                    transparent = false;
-            if (!transparent)
-                mask[i] = 'x';
-        }
+        recoverCursorPixels(pixels.data(), white, alpha.data(), mask.data(), (size_t)w * h);
         auto cursor = rfbMakeXCursor(w, h, source.data(), mask.data());
         if (cursor) {
             cursor->richSource = (unsigned char *)malloc(pixels.size());
-            if (cursor->richSource) {
+            cursor->alphaSource = (unsigned char *)malloc(alpha.size());
+            cursor->cleanupRichSource = TRUE;
+            if (cursor->richSource && cursor->alphaSource) {
                 memcpy(cursor->richSource, pixels.data(), pixels.size());
-                cursor->cleanupRichSource = TRUE;
+                memcpy(cursor->alphaSource, alpha.data(), alpha.size());
+                cursor->alphaPreMultiplied = FALSE;
                 cursor->xhot = (unsigned short)std::min(icon.xHotspot, (DWORD)w - 1);
                 cursor->yhot = (unsigned short)std::min(icon.yHotspot, (DWORD)h - 1);
                 rfbSetCursor(screen, cursor);

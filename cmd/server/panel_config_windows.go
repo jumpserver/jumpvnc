@@ -41,9 +41,10 @@ func (t *windowsTray) refreshPanelSettings(keepDraft bool) {
 	if err != nil {
 		t.setPanelPasswordFile("")
 		p.rootEnabled = false
-		setControlText(p.ssh, "无法读取配置文件")
-		setControlText(p.sshUser, "")
-		setControlText(p.vnc, "")
+		setControlText(p.fingerprint, "无法读取配置文件")
+		setControlText(p.sshListenInput, "")
+		setControlText(p.sshUserInput, "")
+		setControlText(p.authorizedKeys, "")
 		setControlText(p.rootLabel, "根目录")
 		hint := "请打开 YAML 配置检查文件内容。"
 		if !t.canConfigure() {
@@ -51,17 +52,15 @@ func (t *windowsTray) refreshPanelSettings(keepDraft bool) {
 		}
 		setControlText(p.rootHint, hint)
 		setControlText(p.passwordHint, hint)
+		setControlText(p.keysHint, hint)
 	} else {
 		t.setPanelPasswordFile(desktopPasswordFile(t.configPath, cfg))
-		setControlText(p.ssh, "SSH 监听："+cfg.SSH.Listen)
-		setControlText(p.sshUser, "SSH 登录用户名："+cfg.SSH.User)
-		backend := "关闭"
-		if cfg.SSH.AllowVNC {
-			backend = cfg.VNC.Listen + "  (" + cfg.VNC.Engine + ")"
-		}
-		setControlText(p.vnc, "VNC 后端："+backend)
-		p.rootEnabled = cfg.SFTP.Mode != "disabled"
-		setControlText(p.rootLabel, "根目录  ·  "+sftpModeLabel(cfg.SFTP.Mode))
+		setControlText(p.sshListenInput, cfg.SSH.Listen)
+		setControlText(p.sshUserInput, cfg.SSH.User)
+		t.refreshPanelAuthorization(cfg)
+		p.rootEnabled = true
+		p.savedMode = cfg.SFTP.Mode
+		sendMessage.Call(p.sftpMode, cbSetCurSel, uintptr(sftpModeIndex(cfg.SFTP.Mode)), 0)
 		p.savedRoot = cfg.SFTP.Root
 		if p.savedRoot == "" && t.registration == nil {
 			p.savedRoot = "~"
@@ -73,6 +72,9 @@ func (t *windowsTray) refreshPanelSettings(keepDraft bool) {
 	}
 	setControlEnabled(p.rootInput, p.rootEnabled)
 	setControlEnabled(p.rootBrowse, p.rootEnabled)
+	for _, control := range []uintptr{p.sshListenInput, p.sshUserInput, p.sshSave, p.authorizedKeys, p.keysSave, p.keyCopy, p.publicCopy, p.connectionCopy, p.sftpMode} {
+		setControlEnabled(control, err == nil)
+	}
 	p.updateRootSave()
 }
 
@@ -103,25 +105,49 @@ func controlText(control uintptr) string {
 
 func (p *managementWindow) updateRootSave() {
 	root := controlText(p.rootInput)
-	setControlEnabled(p.rootSave, p.rootEnabled && strings.TrimSpace(root) != "" && root != p.savedRoot)
+	mode := p.selectedSFTPMode()
+	setControlEnabled(p.rootSave, p.rootEnabled && (mode == "disabled" || strings.TrimSpace(root) != "") && (root != p.savedRoot || mode != p.savedMode))
 }
 
 func (t *windowsTray) savePanelRoot() {
 	p := &t.panel
 	root := controlText(p.rootInput)
-	if !p.rootEnabled || root == p.savedRoot || strings.TrimSpace(root) == "" {
+	mode := p.selectedSFTPMode()
+	if !t.canApplyPanelSettings() || !p.rootEnabled || (root == p.savedRoot && mode == p.savedMode) {
 		return
 	}
-	if t.registration != nil && !filepath.IsAbs(root) {
+	if mode != "disabled" && t.registration != nil && !filepath.IsAbs(root) {
 		showTrayError(p.window, "无法保存 SFTP 根目录", errors.New("请输入完整的文件夹路径"))
 		return
 	}
-	if err := writeSFTPRoot(t.configPath, root); err != nil {
+	if err := updateProtectedFile(t.configPath, func(original []byte) ([]byte, error) {
+		return config.WithSFTPSettings(t.configPath, original, mode, root)
+	}); err != nil {
 		showTrayError(p.window, "无法保存 SFTP 根目录", err)
 		return
 	}
 	t.refreshPanelSettings(false)
-	setControlText(p.rootHint, "已保存。重启服务后使用新目录。")
+	t.applyPanelSettings()
+	setControlText(p.rootHint, "已保存，正在应用文件传输设置。")
+}
+
+var sftpModes = []string{"disabled", "read_write", "read_only", "write_only"}
+
+func sftpModeIndex(mode string) int {
+	for i, value := range sftpModes {
+		if mode == value {
+			return i
+		}
+	}
+	return 0
+}
+
+func (p *managementWindow) selectedSFTPMode() string {
+	index, _, _ := sendMessage.Call(p.sftpMode, cbGetCurSel, 0, 0)
+	if index >= uintptr(len(sftpModes)) {
+		return "disabled"
+	}
+	return sftpModes[index]
 }
 
 func writeSFTPRoot(name, root string) error {

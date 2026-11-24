@@ -11,6 +11,7 @@ export function syncTransport(form) {
   fields.transport.value = vnc ? tunnel ? 'forward' : 'vnc' : 'subsystem';
   for (const row of form.querySelectorAll('[data-vnc]')) row.hidden = !vnc;
   for (const row of form.querySelectorAll('[data-ssh-tunnel]')) row.hidden = !tunnel;
+  for (const row of form.querySelectorAll('[data-ssh]')) row.hidden = vnc && !tunnel;
   for (const row of form.querySelectorAll('[data-user]')) row.hidden = vnc;
   fields.sshHost.disabled = !tunnel;
   fields.sshHost.required = tunnel;

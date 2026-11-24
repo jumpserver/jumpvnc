@@ -21,8 +21,8 @@ test('remote cursor pixels, transparency and hotspot follow desktop scale', () =
   const { client, rendered } = cursorFixture(image);
   client._refreshCursor();
   assert.deepEqual(rendered[0], { w: 2, h: 2, hotx: 1, hoty: 1,
-    rgbaPixels: new Uint8Array([5, 10, 20, 0, 7, 10, 20, 255,
-      13, 10, 20, 255, 15, 10, 20, 255]) });
+    rgbaPixels: new Uint8Array([2, 10, 20, 191, 5, 10, 20, 255,
+      11, 10, 20, 255, 13, 10, 20, 255]) });
   assert.equal(client._cursorImage, image);
   client._refreshCursor();
   assert.equal(rendered[1], rendered[0]);
@@ -43,7 +43,7 @@ test('cursor changes, hidden shapes and the local dot retain base behavior', () 
   const image = { rgbaPixels: new Uint8Array([1, 2, 3, 0]), w: 1, h: 1, hotx: 0, hoty: 0 };
   const { client, rendered } = cursorFixture(image);
   client._refreshCursor();
-  assert.deepEqual([...rendered.at(-1).rgbaPixels], [1, 2, 3, 0]);
+  assert.deepEqual([...rendered.at(-1).rgbaPixels], [0, 0, 0, 0]);
   client._cursorImage = { rgbaPixels: new Uint8Array(0), w: 0, h: 0, hotx: 0, hoty: 0 };
   client._refreshCursor();
   assert.equal(rendered.at(-1), client._cursorImage);
@@ -72,6 +72,19 @@ test('LibVNCServer Provide-only clipboard keeps Chinese text', () => {
   const { client, sent } = fixture();
   client.clipboardPasteFrom('中文剪贴板');
   assert.deepEqual(sent, [['utf8', 'socket', [1], ['中文剪贴板']]]);
+});
+
+test('Mac Option remains Alt for Windows shortcuts instead of becoming a text keysym', () => {
+  const events = [];
+  class Base { _handleKeyEvent(...args) { events.push(args); } }
+  const client = new (nativeRFB(Base))();
+  client.commandAsControl = true;
+  client._handleKeyEvent(0xff7e, 'AltLeft', true);
+  client._handleKeyEvent(0xfe03, 'AltRight', true);
+  client._handleKeyEvent(0xfe03, 'AltRight', false);
+  client._handleKeyEvent(0xff7e, 'AltLeft', false);
+  assert.deepEqual(events, [[0xffe9, 'AltLeft', true], [0xffea, 'AltRight', true],
+    [0xffea, 'AltRight', false], [0xffe9, 'AltLeft', false]]);
 });
 
 test('normal negotiation, old servers and input policy keep base behavior', () => {

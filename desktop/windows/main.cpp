@@ -20,6 +20,8 @@
 using Microsoft::WRL::ComPtr;
 #include "runtime.h"
 #include "h264_bridge.h"
+#include "cursor_bridge.h"
+#include "keyboard_input.h"
 struct ClientInput {
     std::set<WORD> keys;
     int buttons = 0;
@@ -65,114 +67,14 @@ static bool injectInput(INPUT &input, const char *kind) {
     return false;
 }
 static void keyInput(WORD key, bool down, bool unicode = false) {
-    INPUT i{};
-    i.type = INPUT_KEYBOARD;
-    i.ki.wVk = unicode ? 0 : key;
-    i.ki.wScan = unicode ? key : 0;
-    i.ki.dwFlags = (down ? 0 : KEYEVENTF_KEYUP) | (unicode ? KEYEVENTF_UNICODE : 0);
-    if (!unicode && (key == VK_RCONTROL || key == VK_RMENU || (key >= VK_PRIOR && key <= VK_DOWN) ||
-                     key == VK_INSERT || key == VK_DELETE || key == VK_LWIN || key == VK_RWIN))
-        i.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
+    INPUT i = keyboardInput(key, down, unicode);
     injectInput(i, "keyboard");
 }
 static void keyboard(rfbBool down, rfbKeySym sym, rfbClientPtr cl) {
     if (!inputAllowed(cl, "keyboard"))
         return;
     auto &state = *static_cast<ClientInput *>(cl->clientData);
-    WORD vk = 0;
-    if (sym >= XK_F1 && sym <= XK_F24)
-        vk = VK_F1 + (sym - XK_F1);
-    else
-        switch (sym) {
-        case XK_BackSpace:
-            vk = VK_BACK;
-            break;
-        case XK_Tab:
-        case XK_ISO_Left_Tab:
-            vk = VK_TAB;
-            break;
-        case XK_Return:
-        case XK_KP_Enter:
-            vk = VK_RETURN;
-            break;
-        case XK_Escape:
-            vk = VK_ESCAPE;
-            break;
-        case XK_Insert:
-            vk = VK_INSERT;
-            break;
-        case XK_Delete:
-            vk = VK_DELETE;
-            break;
-        case XK_Home:
-            vk = VK_HOME;
-            break;
-        case XK_End:
-            vk = VK_END;
-            break;
-        case XK_Page_Up:
-            vk = VK_PRIOR;
-            break;
-        case XK_Page_Down:
-            vk = VK_NEXT;
-            break;
-        case XK_Left:
-            vk = VK_LEFT;
-            break;
-        case XK_Up:
-            vk = VK_UP;
-            break;
-        case XK_Right:
-            vk = VK_RIGHT;
-            break;
-        case XK_Down:
-            vk = VK_DOWN;
-            break;
-        case XK_Shift_L:
-            vk = VK_LSHIFT;
-            break;
-        case XK_Shift_R:
-            vk = VK_RSHIFT;
-            break;
-        case XK_Control_L:
-            vk = VK_LCONTROL;
-            break;
-        case XK_Control_R:
-            vk = VK_RCONTROL;
-            break;
-        case XK_Alt_L:
-            vk = VK_LMENU;
-            break;
-        case XK_Alt_R:
-            vk = VK_RMENU;
-            break;
-        case XK_Super_L:
-        case XK_Meta_L:
-            vk = VK_LWIN;
-            break;
-        case XK_Super_R:
-        case XK_Meta_R:
-            vk = VK_RWIN;
-            break;
-        case XK_Caps_Lock:
-            vk = VK_CAPITAL;
-            break;
-        case XK_Num_Lock:
-            vk = VK_NUMLOCK;
-            break;
-        case XK_Print:
-            vk = VK_SNAPSHOT;
-            break;
-        case XK_Pause:
-            vk = VK_PAUSE;
-            break;
-        default:
-            if (sym >= 32 && sym < 127) {
-                SHORT k = VkKeyScanW((WCHAR)sym);
-                if (k != -1)
-                    vk = LOBYTE(k);
-            }
-        }
+    WORD vk = virtualKeyForKeysym(sym);
     if (sasRequest && vk == VK_DELETE && (state.keys.count(VK_LCONTROL) || state.keys.count(VK_RCONTROL)) &&
         (state.keys.count(VK_LMENU) || state.keys.count(VK_RMENU))) {
         if (down)
@@ -189,8 +91,8 @@ static void keyboard(rfbBool down, rfbKeySym sym, rfbClientPtr cl) {
             keyOwners.erase(vk);
         }
     } else if (down) {
-        unsigned cp = (sym & 0xff000000) == 0x01000000 ? sym & 0xffffff : sym;
-        if (cp >= 32 && cp <= 0x10ffff && !(cp >= 0xd800 && cp <= 0xdfff)) {
+        unsigned cp = textForKeysym(sym);
+        if (cp) {
             if (cp <= 0xffff) {
                 keyInput((WORD)cp, true, true);
                 keyInput((WORD)cp, false, true);
@@ -266,6 +168,7 @@ static void releaseKeys(rfbClientPtr cl) {
 }
 static void disconnected(rfbClientPtr cl) {
     svncH264Reset(cl);
+    svncCursorReset(cl);
     releaseKeys(cl);
     delete static_cast<ClientInput *>(cl->clientData);
     cl->clientData = nullptr;

@@ -44,12 +44,28 @@ const (
 	idPasswordInput   = 1013
 	idPasswordSave    = 1014
 	idPasswordHint    = 1015
+	idSSHListenInput  = 1016
+	idSSHUserInput    = 1017
+	idSSHSave         = 1018
+	idAuthorizedKeys  = 1019
+	idKeysSave        = 1020
+	idKeyCopy         = 1021
+	idPublicCopy      = 1022
+	idConnectionCopy  = 1023
+	idSFTPMode        = 1024
+	esMultiline       = 0x0004
+	esWantReturn      = 0x1000
+	wsVScroll         = 0x00200000
+	cbsDropDownList   = 0x0003
+	cbAddString       = 0x0143
+	cbGetCurSel       = 0x0147
+	cbSetCurSel       = 0x014e
 	enChange          = 0x0300
 	swHide            = 0
 	swRestore         = 9
 	cwUseDefault      = 0x80000000
-	managementWidth   = 570
-	managementHeight  = 580
+	managementWidth   = 620
+	managementHeight  = 710
 )
 
 var (
@@ -67,17 +83,20 @@ var (
 )
 
 type managementWindow struct {
-	window, status, start, stop, restart, lastError      uintptr
-	admin, configEdit                                    uintptr
-	ssh, vnc, sshUser                                    uintptr
-	rootLabel, rootInput, rootBrowse, rootSave, rootHint uintptr
-	passwordCurrent, passwordShow, passwordInput         uintptr
-	passwordSave, passwordHint                           uintptr
-	savedRoot                                            string
-	passwordFile                                         string
-	rootEnabled                                          bool
-	passwordRevealed                                     bool
-	classRegistered                                      bool
+	window, status, start, stop, restart, lastError         uintptr
+	admin, configEdit                                       uintptr
+	sshListenInput, sshUserInput, sshSave, fingerprint      uintptr
+	authorizedKeys, keysSave, keyCopy, publicCopy, keysHint uintptr
+	connectionCopy, sftpMode                                uintptr
+	authorizedFile, savedMode                               string
+	rootLabel, rootInput, rootBrowse, rootSave, rootHint    uintptr
+	passwordCurrent, passwordShow, passwordInput            uintptr
+	passwordSave, passwordHint                              uintptr
+	savedRoot                                               string
+	passwordFile                                            string
+	rootEnabled                                             bool
+	passwordRevealed                                        bool
+	classRegistered                                         bool
 }
 
 func (t *windowsTray) openPanel() {
@@ -131,36 +150,45 @@ func (t *windowsTray) createPanel() error {
 		id                  uintptr
 		handle              *uintptr
 	}{
-		{"BUTTON", "服务", bsGroupBox | wsGroup, 0, 20, 14, 530, 96, 0, nil},
-		{"STATIC", "", ssNoPrefix, 0, 36, 37, 498, 20, idPanelStatus, &t.panel.status},
+		{"BUTTON", "服务", bsGroupBox | wsGroup, 0, 20, 14, 580, 96, 0, nil},
+		{"STATIC", "", ssNoPrefix, 0, 36, 37, 548, 20, idPanelStatus, &t.panel.status},
 		{"BUTTON", "启动服务", wsTabStop, 0, 36, 64, 100, 28, menuStart, &t.panel.start},
 		{"BUTTON", "停止服务", wsTabStop, 0, 146, 64, 100, 28, menuStop, &t.panel.stop},
 		{"BUTTON", "重启服务", wsTabStop, 0, 256, 64, 100, 28, menuRestart, &t.panel.restart},
-		{"BUTTON", "以管理员身份管理", wsTabStop, 0, 366, 64, 168, 28, menuAdmin, &t.panel.admin},
-		{"BUTTON", "连接配置", bsGroupBox | wsGroup, 0, 20, 121, 530, 115, 0, nil},
-		{"STATIC", "", ssNoPrefix, 0, 36, 144, 498, 18, idPanelSSH, &t.panel.ssh},
-		{"STATIC", "", ssNoPrefix, 0, 36, 164, 498, 18, idPanelVNC, &t.panel.vnc},
-		{"STATIC", "", ssNoPrefix, 0, 36, 184, 498, 18, idPanelSSHUser, &t.panel.sshUser},
-		{"STATIC", "Windows 运行用户：" + t.backendRunUser(), ssNoPrefix, 0, 36, 204, 498, 18, idPanelRunUser, nil},
-		{"BUTTON", "SFTP", bsGroupBox | wsGroup, 0, 20, 247, 530, 100, 0, nil},
-		{"STATIC", "根目录", ssNoPrefix, 0, 36, 268, 498, 18, 0, &t.panel.rootLabel},
-		{"EDIT", "", wsTabStop | esAutoHScroll, wsExClientEdge, 36, 291, 320, 24, idRootInput, &t.panel.rootInput},
-		{"BUTTON", "浏览…", wsTabStop, 0, 366, 289, 78, 28, idRootBrowse, &t.panel.rootBrowse},
-		{"BUTTON", "保存目录", wsTabStop, 0, 454, 289, 80, 28, idRootSave, &t.panel.rootSave},
-		{"STATIC", "", ssNoPrefix, 0, 36, 324, 498, 18, idRootHint, &t.panel.rootHint},
-		{"BUTTON", "VNC 密码", bsGroupBox | wsGroup, 0, 20, 358, 530, 109, 0, nil},
-		{"STATIC", "当前密码", 0, 0, 36, 382, 80, 18, 0, nil},
-		{"EDIT", "", esReadOnly | esPassword, wsExClientEdge, 120, 378, 302, 24, idPasswordCurrent, &t.panel.passwordCurrent},
-		{"BUTTON", "显示密码", wsTabStop, 0, 434, 376, 100, 28, idPasswordShow, &t.panel.passwordShow},
-		{"STATIC", "新密码", 0, 0, 36, 414, 80, 18, 0, nil},
-		{"EDIT", "", wsTabStop | esPassword | esAutoHScroll, wsExClientEdge, 120, 410, 302, 24, idPasswordInput, &t.panel.passwordInput},
-		{"BUTTON", "保存密码", wsTabStop, 0, 434, 408, 100, 28, idPasswordSave, &t.panel.passwordSave},
-		{"STATIC", "", ssNoPrefix, 0, 36, 442, 498, 18, idPasswordHint, &t.panel.passwordHint},
-		{"BUTTON", "配置文件", bsGroupBox | wsGroup, 0, 20, 478, 530, 57, 0, nil},
-		{"EDIT", t.configPath, wsTabStop | esAutoHScroll | esReadOnly, wsExClientEdge, 36, 499, 388, 24, idPanelConfig, nil},
-		{"BUTTON", "编辑配置", wsTabStop, 0, 434, 497, 100, 28, menuConfig, &t.panel.configEdit},
-		{"BUTTON", "查看错误", wsTabStop | wsGroup, 0, 20, 545, 100, 28, menuError, &t.panel.lastError},
-		{"BUTTON", "关闭窗口", wsTabStop, 0, 450, 545, 100, 28, idCancel, nil},
+		{"BUTTON", "以管理员身份管理", wsTabStop, 0, 406, 64, 178, 28, menuAdmin, &t.panel.admin},
+		{"BUTTON", "连接设置", bsGroupBox | wsGroup, 0, 20, 120, 580, 108, 0, nil},
+		{"STATIC", "SSH 监听", 0, 0, 36, 146, 70, 18, 0, nil},
+		{"EDIT", "", wsTabStop | esAutoHScroll, wsExClientEdge, 108, 140, 228, 24, idSSHListenInput, &t.panel.sshListenInput},
+		{"STATIC", "用户名", 0, 0, 350, 146, 60, 18, 0, nil},
+		{"EDIT", "", wsTabStop | esAutoHScroll, wsExClientEdge, 410, 140, 174, 24, idSSHUserInput, &t.panel.sshUserInput},
+		{"STATIC", "", ssNoPrefix, 0, 36, 179, 430, 20, 0, &t.panel.fingerprint},
+		{"BUTTON", "保存并应用", wsTabStop, 0, 476, 173, 108, 28, idSSHSave, &t.panel.sshSave},
+		{"STATIC", "运行账户：" + t.backendRunUser(), ssNoPrefix, 0, 36, 204, 548, 18, idPanelRunUser, nil},
+		{"BUTTON", "SSH 授权公钥", bsGroupBox | wsGroup, 0, 20, 238, 580, 164, 0, nil},
+		{"EDIT", "", wsTabStop | esMultiline | esWantReturn | wsVScroll, wsExClientEdge, 36, 262, 548, 72, idAuthorizedKeys, &t.panel.authorizedKeys},
+		{"BUTTON", "复制连接私钥", wsTabStop, 0, 36, 344, 128, 28, idKeyCopy, &t.panel.keyCopy},
+		{"BUTTON", "复制授权公钥", wsTabStop, 0, 174, 344, 128, 28, idPublicCopy, &t.panel.publicCopy},
+		{"BUTTON", "保存并应用", wsTabStop, 0, 476, 344, 108, 28, idKeysSave, &t.panel.keysSave},
+		{"STATIC", "", ssNoPrefix, 0, 36, 378, 548, 18, 0, &t.panel.keysHint},
+		{"BUTTON", "文件传输", bsGroupBox | wsGroup, 0, 20, 412, 580, 106, 0, nil},
+		{"STATIC", "访问模式", 0, 0, 36, 438, 70, 18, 0, &t.panel.rootLabel},
+		{"COMBOBOX", "", wsTabStop | cbsDropDownList | wsVScroll, 0, 108, 432, 160, 180, idSFTPMode, &t.panel.sftpMode},
+		{"EDIT", "", wsTabStop | esAutoHScroll, wsExClientEdge, 36, 464, 350, 24, idRootInput, &t.panel.rootInput},
+		{"BUTTON", "浏览…", wsTabStop, 0, 396, 462, 70, 28, idRootBrowse, &t.panel.rootBrowse},
+		{"BUTTON", "保存并应用", wsTabStop, 0, 476, 462, 108, 28, idRootSave, &t.panel.rootSave},
+		{"STATIC", "", ssNoPrefix, 0, 36, 495, 548, 18, idRootHint, &t.panel.rootHint},
+		{"BUTTON", "VNC 密码", bsGroupBox | wsGroup, 0, 20, 530, 580, 110, 0, nil},
+		{"STATIC", "当前密码", 0, 0, 36, 554, 80, 18, 0, nil},
+		{"EDIT", "", esReadOnly | esPassword, wsExClientEdge, 120, 550, 346, 24, idPasswordCurrent, &t.panel.passwordCurrent},
+		{"BUTTON", "显示密码", wsTabStop, 0, 476, 548, 108, 28, idPasswordShow, &t.panel.passwordShow},
+		{"STATIC", "新密码", 0, 0, 36, 586, 80, 18, 0, nil},
+		{"EDIT", "", wsTabStop | esPassword | esAutoHScroll, wsExClientEdge, 120, 582, 346, 24, idPasswordInput, &t.panel.passwordInput},
+		{"BUTTON", "保存并应用", wsTabStop, 0, 476, 580, 108, 28, idPasswordSave, &t.panel.passwordSave},
+		{"STATIC", "", ssNoPrefix, 0, 36, 615, 548, 18, idPasswordHint, &t.panel.passwordHint},
+		{"BUTTON", "高级配置", wsTabStop, 0, 20, 660, 100, 28, menuConfig, &t.panel.configEdit},
+		{"BUTTON", "复制连接信息", wsTabStop, 0, 130, 660, 136, 28, idConnectionCopy, &t.panel.connectionCopy},
+		{"BUTTON", "查看日志", wsTabStop, 0, 276, 660, 100, 28, menuError, &t.panel.lastError},
+		{"BUTTON", "关闭窗口", wsTabStop, 0, 500, 660, 100, 28, idCancel, nil},
 	}
 	font, _, _ := getStockObject.Call(defaultGUIFont)
 	for _, control := range controls {
@@ -177,6 +205,11 @@ func (t *windowsTray) createPanel() error {
 			*control.handle = child
 		}
 	}
+	for _, label := range []string{"关闭", "读写", "只读", "只写"} {
+		text := windows.StringToUTF16Ptr(label)
+		sendMessage.Call(t.panel.sftpMode, cbAddString, 0, uintptr(unsafe.Pointer(text)))
+	}
+	sendMessage.Call(t.panel.authorizedKeys, 0x00c5, 1<<20, 0) // EM_SETLIMITTEXT
 	t.panel.window = hwnd
 	return nil
 }
@@ -191,6 +224,9 @@ func (t *windowsTray) updatePanel() {
 	setControlEnabled(t.panel.restart, t.canConfigure() && t.service.canStop())
 	setControlEnabled(t.panel.lastError, t.service.currentError() != nil || (t.registration != nil && t.canConfigure()))
 	setControlEnabled(t.panel.configEdit, t.canConfigure())
+	for _, control := range []uintptr{t.panel.sshSave, t.panel.keysSave, t.panel.rootSave, t.panel.passwordSave} {
+		setControlEnabled(control, t.canApplyPanelSettings())
+	}
 	if t.registration == nil || t.canConfigure() {
 		showWindow.Call(t.panel.admin, swHide)
 	}
@@ -231,6 +267,10 @@ func (t *windowsTray) panelProc(hwnd uintptr, message uint32, wParam, lParam uin
 			t.panel.updatePasswordSave()
 			return 0
 		}
+		if command == idSFTPMode && notification == 1 {
+			t.panel.updateRootSave()
+			return 0
+		}
 		if notification != 0 {
 			return 0
 		}
@@ -241,6 +281,12 @@ func (t *windowsTray) panelProc(hwnd uintptr, message uint32, wParam, lParam uin
 			if t.panel.rootEnabled {
 				t.browsePanelRoot()
 			}
+		case idSSHSave:
+			t.savePanelSSH()
+		case idKeysSave:
+			t.savePanelKeys()
+		case idKeyCopy, idPublicCopy, idConnectionCopy:
+			t.copyPanelSettings(command)
 		case idRootSave:
 			t.savePanelRoot()
 		case idPasswordShow:

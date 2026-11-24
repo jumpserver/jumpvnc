@@ -28,13 +28,20 @@ func main() {
 	service := flag.Bool("service", false, "run under the Windows Service Control Manager")
 	manageService := flag.Bool("manage-service", false, "show the tray for the installed Windows service")
 	openPanel := flag.Bool("open-panel", false, "open the Windows service management window")
+	initializeService := flag.Bool("initialize-service", false, "initialize missing Windows service credentials and configuration")
 	flag.Parse()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil)).With("product", productName)
 	var err error
-	if (*service && (*manageService || *openPanel || *noTray)) || (*noTray && (*manageService || *openPanel)) {
+	if *initializeService {
+		if *service || *manageService || *openPanel || *noTray {
+			err = fmt.Errorf("initialization cannot be combined with runtime modes")
+		} else {
+			err = initializeWindowsService(*name)
+		}
+	} else if (*service && (*manageService || *openPanel || *noTray)) || (*noTray && (*manageService || *openPanel)) {
 		err = fmt.Errorf("service, service management, and foreground modes cannot be combined")
 	} else if *service {
 		err = runWindowsService(ctx, *name)

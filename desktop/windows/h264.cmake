@@ -11,11 +11,12 @@ function(svnc_replace old new)
   string(REPLACE "${old}" "${new}" updated "${rfbserver}")
   set(rfbserver "${updated}" PARENT_SCOPE)
 endfunction()
-svnc_replace("#include <rfb/rfb.h>" "#include <rfb/rfb.h>\n#include \"h264_bridge.h\"")
-svnc_replace("        cl->preferredEncoding=-1;" "        svncH264Reset(cl);\n        if (lastPreferredEncoding == 50) lastPreferredEncoding = -1;\n        cl->preferredEncoding=-1;")
+svnc_replace("#include <rfb/rfb.h>" "#include <rfb/rfb.h>\n#include \"h264_bridge.h\"\n#include \"cursor_bridge.h\"")
+svnc_replace("        cl->preferredEncoding=-1;" "        svncH264Reset(cl);\n        svncCursorReset(cl);\n        if (lastPreferredEncoding == 50) lastPreferredEncoding = -1;\n        cl->preferredEncoding=-1;")
 svnc_replace("            enc = Swap32IfLE(enc);\n\n            switch (enc)"
              "            enc = Swap32IfLE(enc);\n            svncH264Offered(cl, enc);\n\n            switch (enc)")
-svnc_replace("            case rfbEncodingCopyRect:" "            case 50: /* noVNC H.264, negotiated explicitly */\n                if (cl->preferredEncoding == -1 && svncH264Select(cl))\n                    cl->preferredEncoding = 50;\n                break;\n            case rfbEncodingCopyRect:")
+svnc_replace("            case rfbEncodingCopyRect:" "            case 0x574d5664: /* VMware alpha cursor */\n                svncCursorEnable(cl);\n                break;\n            case 50: /* noVNC H.264, negotiated explicitly */\n                if (cl->preferredEncoding == -1 && svncH264Select(cl))\n                    cl->preferredEncoding = 50;\n                break;\n            case rfbEncodingCopyRect:")
+svnc_replace("if (!rfbSendCursorShape(cl))" "if (!svncSendCursorShape(cl))")
 # After ordinary region accounting, encode one complete image so inter-frame
 # references always use the same geometry. Cursor-only updates remain metadata.
 svnc_replace("    rfbStatRecordMessageSent(cl, rfbFramebufferUpdate, 0, 0);"

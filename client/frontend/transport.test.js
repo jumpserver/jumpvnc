@@ -9,7 +9,7 @@ function fixture() {
   const elements = Object.fromEntries(['protocol', 'transport', 'host', 'port', 'user', 'sshTunnel', 'sshHost', 'sshPort', 'sshUser',
     'jump', 'identity', 'knownHosts', 'hostKeyAlias', 'storedPassword', 'vncPassword', 'sshPassword', 'storedSSHPassword'].map(name => [name, field()]));
   elements.sshTunnel.type = elements.storedPassword.type = elements.storedSSHPassword.type = 'checkbox';
-  const rows = Object.fromEntries(['data-vnc', 'data-ssh-tunnel', 'data-user'].map(name => [name, { hidden: false }]));
+  const rows = Object.fromEntries(['data-vnc', 'data-ssh-tunnel', 'data-user', 'data-ssh'].map(name => [name, { hidden: false }]));
   return { elements, rows, dataset: {}, querySelectorAll: selector => [rows[selector.slice(1, -1)]] };
 }
 const form = fixture();
@@ -22,6 +22,7 @@ assert.equal(form.rows['data-ssh-tunnel'].hidden, true);
 assert.equal(form.elements.sshHost.required, false);
 assert.equal(form.elements.sshHost.disabled, true);
 assert.equal(form.rows['data-user'].hidden, false);
+assert.equal(form.rows['data-ssh'].hidden, false);
 assert.deepEqual(profileFromForm(form), { ...p, vncHost: '', vncPassword: '', vncUsername: '', sshPassword: '', storedSSHPassword: false });
 
 // Selecting VNC resets the protocol port and needs no SSH credentials.
@@ -31,6 +32,7 @@ assert.equal(form.elements.port.value, '5900');
 assert.equal(form.rows['data-vnc'].hidden, false);
 assert.equal(form.rows['data-ssh-tunnel'].hidden, true);
 assert.equal(form.rows['data-user'].hidden, true);
+assert.equal(form.rows['data-ssh'].hidden, true);
 let plain = profileFromForm(form);
 assert.equal(plain.transport, 'vnc');
 assert.equal(plain.port, 5900);
@@ -40,6 +42,7 @@ assert.equal(plain.storedPassword, true);
 
 form.elements.sshTunnel.checked = true;
 syncTransport(form);
+assert.equal(form.rows['data-ssh'].hidden, false);
 assert.equal(form.rows['data-ssh-tunnel'].hidden, false);
 assert.equal(form.rows['data-user'].hidden, true);
 assert.equal(form.elements.sshUser.disabled, false);

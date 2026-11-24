@@ -11,7 +11,7 @@ import (
 
 const (
 	emSetPasswordChar = 0x00cc
-	passwordHint      = "新密码须为 1–8 个可打印 ASCII 字符。保存后重启生效。"
+	passwordHint      = "新密码须为 1–8 个可打印 ASCII 字符，保存后自动应用。"
 )
 
 func desktopPasswordFile(name string, cfg config.Config) string {
@@ -107,7 +107,7 @@ func (t *windowsTray) togglePanelPassword() {
 func (t *windowsTray) savePanelPassword() {
 	p := &t.panel
 	password := controlText(p.passwordInput)
-	if p.passwordFile == "" || password == "" {
+	if !t.canApplyPanelSettings() || p.passwordFile == "" || password == "" {
 		return
 	}
 	name, err := t.currentPanelPasswordFile()
@@ -120,7 +120,8 @@ func (t *windowsTray) savePanelPassword() {
 	}
 	p.hidePassword()
 	setControlText(p.passwordInput, "")
-	setControlText(p.passwordHint, "密码已保存。重启服务后使用新密码。")
+	t.applyPanelSettings()
+	setControlText(p.passwordHint, "密码已保存，正在应用。")
 }
 
 func writeDesktopPassword(name, password string) error {
