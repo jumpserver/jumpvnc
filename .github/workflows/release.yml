@@ -78,14 +78,20 @@ jobs:
               if name.endswith('.zip'):
                   with zipfile.ZipFile(path) as archive:
                       members = archive.namelist()
-                      assert any(p.endswith('/LICENSE') and '/sources/' not in p for p in members), f'Missing GPL license: {name}'
+                      licenses = [p for p in members if p.endswith('/LICENSE') and '/sources/' not in p]
+                      assert len(licenses) == 1, f'Missing project license: {name}'
+                      license_text = archive.read(licenses[0])
+                      assert b'Version 3, 29 June 2007' in license_text, 'Incorrect project license'
                       sources = [p for p in members if p.endswith('/sources/jumpvnc.tar.gz')]
                       assert len(sources) == 1, f'Missing corresponding source: {name}'
                       data = archive.read(sources[0])
               elif name.endswith('.tar.gz'):
                   with tarfile.open(path, 'r:gz') as archive:
                       members = archive.getnames()
-                      assert any(p.endswith('/LICENSE') and '/sources/' not in p for p in members), f'Missing GPL license: {name}'
+                      licenses = [p for p in members if p.endswith('/LICENSE') and '/sources/' not in p]
+                      assert len(licenses) == 1, f'Missing project license: {name}'
+                      license_text = archive.extractfile(licenses[0]).read()
+                      assert b'Version 3, 29 June 2007' in license_text, 'Incorrect project license'
                       sources = [p for p in members if p.endswith('/sources/jumpvnc.tar.gz')]
                       assert len(sources) == 1, f'Missing corresponding source: {name}'
                       data = archive.extractfile(sources[0]).read()
@@ -94,8 +100,7 @@ jobs:
               if data is not None:
                   with tarfile.open(fileobj=io.BytesIO(data), mode='r:gz') as source:
                       assert source.pax_headers.get('comment') == commit, f'Source commit mismatch: {name}'
-                      license_text = source.extractfile('LICENSE').read()
-                      assert b'Version 3, 29 June 2007' in license_text, 'Incorrect project license'
+                      # The macOS archive contains the client module; its project license is at the package root.
               shutil.copy2(path, output / name)
               shutil.copy2(checksum, output / checksum.name)
               print(digest, name)
