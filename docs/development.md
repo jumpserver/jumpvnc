@@ -1,0 +1,75 @@
+# JumpVNC 开发指南
+
+本指南说明源码构建、测试和后端开发入口。下载安装与连接步骤见 [项目首页](../README.md)。以下命令默认从仓库根目录执行。
+
+## 服务端
+
+需要 Go 1.26.9 或更新版本。
+
+```bash
+mkdir -p bin
+go build -o bin/sshvnc ./cmd/server
+```
+
+Windows 下构建 Agent：
+
+```powershell
+go build -o bin\sshvnc.exe .\cmd\server
+```
+
+Agent 与桌面后端分别构建，根据平台选择后端：
+
+- [Windows LibVNCServer + DXGI 后端](../desktop/windows/README.md)：依赖准备、编译、系统服务部署与真实 RFB 验收。
+- [Linux LibVNCServer + X11 后端](../desktop/linux/README.md)：CMake 构建、运行依赖及隔离 Xvfb 测试。
+
+构建后按 [快速开始](../README.md#快速开始) 准备配置、密钥和密码。`configs/linux.example.yaml` 与 `configs/windows.service.example.yaml` 使用 LibVNCServer 后端。
+
+### 可选的 TigerVNC 后端
+
+TigerVNC 仍是受支持的可选后端。`configs/server.example.yaml` 使用该后端，不是 Linux 打包后端的配置示例。需要 OpenSSH 客户端、TigerVNC 的桌面共享和密码工具；Debian 对应 `openssh-client`、`tigervnc-scraping-server` 和 `tigervnc-tools`。
+
+使用该配置时，通过 `vncpasswd` 生成配置中引用的 `vnc.passwd`。LibVNCServer 使用的是 1–8 字节可打印 ASCII 明文密码文件 `vnc-password.txt`，两种密码文件格式不能混用。
+
+## macOS 客户端
+
+需要 macOS、Go 1.27.3 或更新版本，以及 Node.js 和 npm。客户端使用独立的 Go 模块。
+
+```bash
+cd client
+npm --prefix frontend ci
+go tool mygo build -skip-dmg
+```
+
+Apple Silicon 构建结果为 `client/build/darwin-arm64/JumpVNC.app`。在 `client` 目录构建 Apple Silicon / Intel 通用版本：
+
+```bash
+go tool mygo build -platform darwin/universal -skip-dmg
+```
+
+客户端实现、配置与性能指标见 [客户端文档](../client/README.md)。`client-libvnc` 是独立实验客户端，未替换正式 MyGo / noVNC 客户端。
+
+## 测试
+
+在仓库根目录检查服务端：
+
+```bash
+go test -race ./...
+go vet ./...
+```
+
+客户端需单独安装前端依赖并检查：
+
+```bash
+cd client
+npm --prefix frontend ci
+npm --prefix frontend test
+go test -race ./...
+go vet ./...
+```
+
+真实桌面集成测试需要显式配置测试环境，具体命令见各平台后端文档。构建矩阵、打包与依赖版本见 [CI 工作流](../.github/workflows/build.yml)。
+
+## 协议与集成
+
+- [SVNC 接入协议](protocol.md)：SSH 子系统、桌面与文件权限、兼容方式及 JumpServer / Guacamole 集成约定；当前为 v0.1 草案。
+- [`.svnc` 连接文件格式](connection-file.md)：连接配置的导入、导出与共享。

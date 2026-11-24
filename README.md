@@ -1,66 +1,96 @@
 # JumpVNC
 
-JumpVNC 是 JumpServer 团队开发的远程桌面工具。服务端 `sshvnc` 共享 Linux X11 或 Windows 当前登录用户的桌面，macOS 上可用 JumpVNC Viewer 连接。
+**SSH + VNC，让远程桌面与文件上传下载共用一个安全连接。**
 
-默认只需开放 TCP 5922。服务端用 SSH 公钥认证，桌面通过 `vnc` 子系统传输 RFB，文件通过同一端口走 SFTP。协议名保留 SVNC，产品名使用 JumpVNC。协议细节见 [SVNC 规范](docs/protocol.md)。
+JumpVNC 是 JumpServer 团队开发的远程桌面工具：VNC 提供桌面操作，SSH 提供身份认证、加密与连接复用，SFTP 提供文件上传下载。在同一个客户端中即可操作远程桌面、同步文本和传输文件。
 
-## 下载
+目前提供 macOS 客户端，以及 Windows、Linux 服务端。JumpVNC 是产品名，SVNC 是接入协议名，可独立使用，无需部署 JumpServer。
 
-打开 [GitHub Actions 构建记录](https://github.com/jumpserver-dev/svnc/actions/workflows/build.yml)，在成功构建的 **Artifacts** 中下载。压缩包附带 SHA-256 校验文件。
+## 应用场景
 
-| 平台 | 产物 |
+- **远程办公与运维**：从 Mac 访问 Windows 或 Linux 桌面，操作业务软件、排查问题，并在本机与远程机器之间复制文本、上传和下载文件。
+- **给 VNC 补上文件传输**：远程桌面操作时，直接将本机文件上传到远端，或将远端文件下载到本机，无需再单独打开文件传输工具。
+- **简化网络接入**：桌面和文件共用一个 TCP 端口，适合希望减少防火墙开放端口、使用 SSH 公钥管理访问的环境。
+- **无显示器的 Linux 桌面**：配合 Xvfb 提供远程图形环境，运行开发工具或图形化管理程序。见 [无显示器部署说明](deployments/linux/README.md)。
+
+## 差异化特点
+
+| 特点 | 使用体验 |
 | --- | --- |
-| macOS（Apple Silicon / Intel） | `jumpvnc-viewer-macos-universal` |
-| Linux（amd64 / arm64） | `jumpvnc-server-linux-amd64` / `jumpvnc-server-linux-arm64` |
-| Windows（amd64） | `jumpvnc-server-windows-amd64` |
+| **SSH + VNC + SFTP** | 桌面与文件传输复用同一 SSH 连接，默认只需开放 TCP `5922`，无需额外开放 VNC 或文件传输端口。 |
+| **内置文件上传下载** | 桌面窗口中直接浏览远程目录、拖放上传和下载文件，文件传输使用 SFTP，无需依赖 VNC 文件传输扩展。 |
+| **安全接入与独立权限** | SSH 公钥认证、主机身份校验与传输加密；桌面只读、文件根目录和文件读写权限可分别配置。 |
+| **贴合 Mac 操作习惯** | 当前桌面窗口激活时自动双向同步文本剪贴板，支持使用 `⌘C` / `⌘V` 进行远程复制粘贴。 |
+| **清晰与视频两种模式** | 清晰模式适合文字办公；Windows 后端支持 H.264 视频模式，优先使用硬件编码，适合动画与连续滚动。 |
+| **兼容已有 VNC 环境** | 客户端支持 SVNC、普通 VNC 和 VNC + SSH 隧道；已有 VNC Viewer 也可通过 SSH 隧道连接服务端。 |
 
-## Linux 快速启动
+支持多连接窗口，以及通过 `.svnc` 文件导入和分享连接配置。Linux 当前支持 X11，Windows 共享控制台桌面；多个连接访问同一个桌面。目前不支持音频、多屏选择或 Wayland 桌面。
 
-在已登录的 X11 桌面中打开终端。需要 Go 1.26.9+、OpenSSH 客户端和 TigerVNC 的桌面共享与密码工具（Debian 上是 `tigervnc-scraping-server` 和 `tigervnc-tools`）。首次部署时执行下列命令，把 `/path/to/client.pub` 换成客户端的 SSH 公钥路径。
+## 快速开始
+
+### 1. 下载
+
+打开 [GitHub Actions 构建记录](https://github.com/jumpserver/jumpvnc/actions/workflows/build.yml)，在成功构建的 **Artifacts** 中下载对应平台的压缩包。包内附带 SHA-256 校验文件。
+
+| 用途 | 平台 | 下载产物 |
+| --- | --- | --- |
+| 客户端 | macOS（Apple Silicon / Intel） | `jumpvnc-viewer-macos-universal` |
+| 服务端 | Linux（amd64 / arm64） | `jumpvnc-server-linux-amd64` / `jumpvnc-server-linux-arm64` |
+| 服务端 | Windows（amd64） | `jumpvnc-server-windows-amd64` |
+
+### 2. 启动服务端
+
+按目标机器的操作系统选择一种方式，并允许客户端访问服务端 TCP `5922`。服务端使用 SSH 公钥认证，需将客户端公钥加入服务端的 `authorized_keys`。
+
+#### Linux
+
+使用压缩包内置的 LibVNCServer + X11 后端，无需安装 TigerVNC 或 Go。目标系统需要兼容的运行库；Debian 13 可安装：
 
 ```bash
-mkdir -p bin
-go build -o bin/sshvnc ./cmd/server
+sudo apt-get install openssh-client libvncserver1 libx11-6 libxtst6 libxfixes3
+```
+
+解压服务端压缩包，在包含 `bin`、`backends` 和 `configs` 的目录打开 Bash。首次部署执行以下命令，将 `/path/to/client.pub` 换成客户端的 SSH 公钥路径：
+
+```bash
+sudo install -D -m 755 bin/sshvnc /opt/jumpvnc/bin/sshvnc
+sudo install -D -m 755 backends/linux/svnc-desktop /opt/jumpvnc/backends/linux/svnc-desktop
 
 umask 077
 state=/var/lib/sshvnc/$USER
 sudo install -d -m 700 -o "$USER" "$state"
-cp configs/server.example.yaml "$state/config.yaml"
+cp configs/linux.example.yaml "$state/config.yaml"
+sed -i 's|executable: backends/linux/svnc-desktop|executable: /opt/jumpvnc/backends/linux/svnc-desktop|' "$state/config.yaml"
 ssh-keygen -t ed25519 -N '' -f "$state/ssh_host_ed25519_key"
 cp /path/to/client.pub "$state/authorized_keys"
-vncpasswd "$state/vnc.passwd"
+read -r -s -p '设置 VNC 密码（1–8 个可打印 ASCII 字符）: ' vnc_password
+printf '\n'
+printf '%s\n' "$vnc_password" > "$state/vnc-password.txt"
+unset vnc_password
 
-./bin/sshvnc -config "$state/config.yaml"
+/opt/jumpvnc/bin/sshvnc -config "$state/config.yaml"
 ```
 
-后续启动沿用同一份主机密钥。SFTP 默认访问运行用户的主目录，通过 `sftp.root` 和 `sftp.mode` 调整目录和权限。配置与凭据放在 SFTP 根目录之外。
+在已登录的 X11 桌面中，以当前桌面用户运行最后一条命令即可启动，后续沿用已有配置和主机密钥。SFTP 默认访问运行用户的主目录；配置、密钥、密码和后端程序应放在 SFTP 根目录之外。
 
-也可使用 [LibVNCServer + X11 后端](desktop/linux/README.md)。无显示器的机器见 [Xvfb 部署](deployments/linux/README.md)。
+#### Windows
 
-## Windows
+将服务端压缩包解压到 `%ProgramFiles%\SuperVNC`，按 [Windows 部署说明](desktop/windows/README.md#配置与部署) 准备 `service.yaml`、SSH 主机密钥、客户端公钥和 VNC 密码。在部署目录打开管理员 PowerShell：
 
-Windows 默认安装为开机自动运行的系统服务，后端是 LibVNCServer + DXGI。用户登录后自动显示管理托盘，双击图标可查看状态、启停和重启服务、设置文件根目录、修改密码或编辑配置；退出托盘后后台服务继续运行。启停和配置操作需要管理员权限。构建与安装见 [Windows 部署说明](desktop/windows/README.md)，配置见 [Windows 示例](configs/windows.example.yaml)。
-
-## 连接
-
-在 JumpVNC Viewer 中选择 **SVNC**，填服务器地址、端口 `5922` 和 SSH 用户名（示例为 `vncuser`）。首次连接前核对主机密钥，桌面认证时输入 VNC 密码。文件可从右侧 SFTP 面板传输。[Viewer 使用说明](client/README.md)
-
-普通 VNC Viewer 可通过 SSH 本地转发接入。运行下面的命令前，先将已核验的服务端 SSH 主机公钥加入 `known_hosts`。
-
-```bash
-ssh -o StrictHostKeyChecking=yes -o ExitOnForwardFailure=yes \
-    -p 5922 -N -L 127.0.0.1:15900:127.0.0.1:5900 vncuser@server.example.com
+```powershell
+.\deployments\windows\install.ps1 -Agent .\bin\sshvnc.exe -Config .\service.yaml -Start
 ```
 
-保持隧道运行，另开终端运行 `vncviewer 127.0.0.1::15900`。也可用 `sftp -P 5922 vncuser@server.example.com` 直接传文件。
+服务随系统启动，用户登录后自动显示管理托盘。双击托盘可查看状态、启停服务、修改密码或编辑配置。Windows 服务默认关闭文件传输；需要时在 `service.yaml` 中设置 `sftp.mode: read_write` 和明确的 `sftp.root` 文件根目录，再重启服务。
 
-开启 `vnc.compatibility.enabled` 可让普通 Viewer 直连独立 VNC 端口（默认 `5923`）。该端口只使用 VNC 密码认证，流量未经 SSH 加密，仅在可信网络或 VPN 内使用。
+### 3. 连接桌面与传输文件
 
-Guacamole 可将 VNC 目标指向 guacd 可访问的 SSH 本地转发端口，SFTP 则直接连接 Agent 的 SSH 入口。原生 SVNC 适配见 [JumpServer 与 Guacamole 集成约定](docs/protocol.md#73-jumpserver-与-guacamole-集成约定)。
+1. 在 Mac 上解压客户端，打开 `JumpVNC.app`，添加连接。
+2. 协议选择 **SVNC**，填写服务器地址、端口 `5922` 和 SSH 用户名（示例配置为 `vncuser`）。客户端自动使用本机身份及已有 SSH 密钥配置；加密私钥需先加入 SSH agent。
+3. 首次连接时核对服务器主机密钥指纹，再输入前面设置的 VNC 密码。
+4. 进入桌面后，点击“文件管理”浏览远程目录，从 Finder 拖入文件上传，或选中文件下载到本机。文件管理需服务端已启用 SFTP。
+5. 按需在“设置”中切换清晰或视频模式。当前窗口激活时，文本剪贴板自动双向同步。
 
-## 开发
+更多操作见 [Viewer 使用说明](client/README.md)。已有 VNC Viewer 的 SSH 隧道接入方式见 [兼容接入](docs/protocol.md#71-ssh-本地转发)。
 
-```bash
-go test -race ./...
-go vet ./...
-```
+源码构建与测试见 [开发指南](docs/development.md)；协议与第三方集成见 [SVNC 规范](docs/protocol.md)。
