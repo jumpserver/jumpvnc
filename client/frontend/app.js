@@ -190,6 +190,7 @@ function syncControls() {
   $('mkdir').disabled = !connected || !filesAvailable || transferring;
   $('files-toggle').disabled = !connected || !filesAvailable;
   $('clipboard-toggle').disabled = !connected;
+  $('send-secure-attention').disabled = !connected;
   $('settings-offline').hidden = connected || connecting;
   $('transfer-dot').hidden = !transferring;
   $('drop-label').textContent = connected && !filesAvailable ? '文件传输不可用' : transferring ? '正在传输文件' : '将文件拖到这里上传';
@@ -623,6 +624,12 @@ $('clipboard-dialog').addEventListener('close', () => { if (connected) client?.f
 $('quality-profile').addEventListener('change', selectQuality);
 $('files-toggle').addEventListener('click', () => showPanel(activePanel === 'files' ? null : 'files'));
 $('settings-toggle').addEventListener('click', () => showPanel(activePanel === 'settings' ? null : 'settings'));
+$('send-secure-attention').addEventListener('click', () => {
+  if (!connected || !client) return;
+  client.sendCtrlAltDel();
+  showPanel(null);
+  client.focus();
+});
 $('files-close').addEventListener('click', () => showPanel(null));
 $('settings-close').addEventListener('click', () => showPanel(null));
 document.addEventListener('keydown', (event) => {

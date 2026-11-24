@@ -71,6 +71,7 @@
           <h3>当前连接</h3>
           <p id="connection-endpoint" class="connection-info">尚未连接</p>
           <p id="connection-backend" class="setting-note"></p>
+          <button id="send-secure-attention" type="button" disabled>发送 Ctrl+Alt+Del</button>
         </section>
         <details id="performance-panel" class="diagnostics">
           <summary>详细指标</summary>
@@ -100,7 +101,7 @@
           <form id="connect-form">
             <h2>连接设置</h2>
             <div class="fields">
-              <label class="wide">协议<select name="protocol"><option value="svnc">SVNC</option><option value="vnc">VNC</option></select></label>
+              <label class="wide">协议<span class="select-field"><select name="protocol"><option value="svnc">SVNC</option><option value="vnc">VNC</option></select></span></label>
               <label>服务器地址<input name="host" required autocomplete="off" placeholder="IP 地址或主机名"></label>
               <label>端口<input name="port" type="number" min="1" max="65535" placeholder="5922"></label>
               <label class="wide" data-user>用户名<input name="user" placeholder="vncuser" autocomplete="off"></label>

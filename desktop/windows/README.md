@@ -62,6 +62,23 @@ vnc:
 
 日志位于配置旁的 `<配置名>.agent.log`、`<配置名>.stdout.log` 和 `<配置名>.launcher-error.log`。注册启动器前，将部署目录的写权限限制给该账户和管理员。
 
+### Windows 系统服务
+
+服务模式由 Windows 服务控制管理器开机启动。Agent 在 Session 0 运行，`svnc-desktop.exe` 在 Windows 控制台会话里跟随当前输入桌面。服务模式使用 DXGI 抓屏，可在 DXGI 初始化失败、抓屏中断或没有首帧时回退到 Windows GDI。两种抓屏方式都依赖 Windows 提供可捕获的控制台画面。
+
+用管理员权限把发布包解压到 `%ProgramFiles%\SuperVNC`。将 [服务模式示例](../../configs/windows.service.example.yaml) 复制为部署目录下的 `service.yaml`，并准备 SSH 主机密钥、`authorized_keys` 和 `vnc-password.txt`。服务以 `LocalSystem` 运行，限制部署目录、配置引用的可执行文件及密钥文件的 ACL，只允许管理员和 SYSTEM 修改。服务模式要求使用 SSH/SVNC 和 `libvncserver` 后端，配置中关闭普通 VNC 兼容入口与 SFTP。回环后端只接受来自 Agent 进程的连接。若已有托盘或计划任务占用同一端口，先停止相应实例。
+
+在部署目录打开管理员 PowerShell：
+
+```powershell
+.\deployments\windows\install-service.ps1 -Agent .\bin\sshvnc.exe -Config .\service.yaml -Start
+Get-Service SuperVNC
+```
+
+用 SVNC 连接。Windows 停留在登录或锁屏界面时，在原生界面输入 Windows 凭据。若目标要求 `Ctrl+Alt+Del`，使用 Viewer「设置」中的「发送 Ctrl+Alt+Del」，并在 Windows 组策略的「Windows 登录选项」里允许服务发送软件安全注意序列。服务通过 Windows `SendSAS` API 请求该操作，由 Windows 执行组策略。Agent 和抓屏日志分别写入 `service.yaml.service.log` 与 `service.yaml.desktop.log`。
+
+在目标机断开物理显示器并冷启动，全程不连接 RDP，依次验证登录界面、登录、锁屏与解锁、注销后的重新登录。还需验证崩溃重启与手动停止服务后端口回收。自动填写或保存 Windows 凭据尚未实现。
+
 ## 支持范围
 
 - 仅 IPv4 回环监听，使用独立 VNC 密码认证，SSH 承担远程传输加密。
@@ -71,7 +88,7 @@ vnc:
 - Windows 光标形状、热点、隐藏状态和位置通过 RFB 传输。半透明边缘与老式反色光标使用掩码近似，尚未覆盖所有自定义/动画光标。
 - DXGI 访问丢失后保留连接并清空旧画面，重试普通桌面抓屏。主屏分辨率变化通过 NewFBSize 通知支持的客户端，不支持的客户端需要重连。
 
-尚不支持多屏选择、旋转屏、虚拟屏、登录界面、安全桌面、音频或 Windows 用户会话隔离。SendInput 受 UIPI 限制，普通权限后端不能保证控制提权窗口。用户注销会结束当前交互任务；后续登录需手动启动或配置 `-AtLogon`。锁屏/解锁、休眠恢复、分辨率变化的自动恢复逻辑已实现，但仍需在目标设备做完整实机验收。
+尚不支持多屏选择、旋转屏、虚拟屏、音频或 Windows 用户会话隔离。登录界面和安全桌面使用系统服务模式。普通交互任务在用户注销时结束，后续登录需手动启动或配置 `-AtLogon`。普通权限下的 `SendInput` 受 UIPI 限制。锁屏、休眠和分辨率变化仍需在目标设备做实机验收。
 
 抓屏最多约每 16ms 尝试一次，实际吞吐受画面变化、客户端请求、编码和网络影响。当前保持单线程持有 LibVNCServer 与帧缓冲，避免并发修改造成画面撕裂；尚未进行线程拆分和 DXGI dirty/move regions 优化，不宣称相比 UltraVNC 更快。
 

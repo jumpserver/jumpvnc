@@ -9,6 +9,9 @@ struct Options {
     bool viewOnly = false;
     std::wstring passwordFile;
     DWORD parentPid = 0;
+    DWORD consoleSession = 0;
+    std::wstring logFile;
+    std::wstring sasEvent;
 };
 static bool number(const wchar_t *text, unsigned long limit, unsigned long &value) {
     if (!text || !*text)
@@ -50,10 +53,24 @@ static bool parseOptions(int argc, wchar_t **argv, Options &out) {
                 return false;
             out.parentPid = (DWORD)pid;
             parent = true;
+        } else if (!wcscmp(argv[i], L"--console-session")) {
+            unsigned long session;
+            if (out.consoleSession || ++i == argc || !number(argv[i], MAXDWORD - 1, session))
+                return false;
+            out.consoleSession = (DWORD)session;
+        } else if (!wcscmp(argv[i], L"--log-file")) {
+            if (!out.logFile.empty() || ++i == argc || !*argv[i])
+                return false;
+            out.logFile = argv[i];
+        } else if (!wcscmp(argv[i], L"--sas-event")) {
+            if (!out.sasEvent.empty() || ++i == argc || !*argv[i])
+                return false;
+            out.sasEvent = argv[i];
         } else
             return false;
     }
-    return listen && password;
+    return listen && password && (out.consoleSession ? parent && !out.logFile.empty() && !out.sasEvent.empty()
+                                                   : out.logFile.empty() && out.sasEvent.empty());
 }
 static bool readPassword(const std::wstring &name, std::string &password) {
     HANDLE f = CreateFileW(name.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
@@ -92,8 +109,25 @@ static bool desktopAvailable = true;
 static std::wstring pendingClipboard;
 static ULONGLONG clipboardWriteDeadline = 0;
 static int captureOriginX = 0, captureOriginY = 0;
+static bool consoleCapture = false;
+static bool getDesktopName(HDESK desktop, wchar_t (&name)[256]) {
+    DWORD needed = 0;
+    return desktop && GetUserObjectInformationW(desktop, UOI_NAME, name, sizeof(name), &needed);
+}
+static bool onActiveDesktop() {
+    if (!consoleCapture)
+        return true;
+    wchar_t current[256]{}, active[256]{};
+    HDESK input = OpenInputDesktop(0, FALSE, DESKTOP_READOBJECTS);
+    bool same = getDesktopName(input, active) &&
+                getDesktopName(GetThreadDesktop(GetCurrentThreadId()), current) && !_wcsicmp(current, active);
+    if (input)
+        CloseDesktop(input);
+    return same;
+}
 static void receiveClipboard(char *data, int size, rfbClientPtr cl, bool utf8) {
-    if (viewOnly || cl->viewOnly || size < 0 || (size_t)size > clipboardLimit)
+    if (viewOnly || cl->viewOnly || !clipboardWindow || !onActiveDesktop() || size < 0 ||
+        (size_t)size > clipboardLimit)
         return;
     // ExtendedClipboard text includes a terminating NUL on the wire.
     if (utf8 && size > 0 && data[size - 1] == '\0')

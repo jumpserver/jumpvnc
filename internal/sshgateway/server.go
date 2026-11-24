@@ -19,11 +19,31 @@ import (
 )
 
 type Server struct {
-	cfg    config.Config
-	log    *slog.Logger
-	signer ssh.Signer
-	keys   map[string]struct{}
-	files  *sftpfs.Filesystem
+	cfg            config.Config
+	log            *slog.Logger
+	signer         ssh.Signer
+	keys           map[string]struct{}
+	files          *sftpfs.Filesystem
+	dialVNCBackend func(context.Context) (*net.TCPConn, error)
+}
+
+// SetVNCDialer configures backend verification before the server begins serving.
+func (s *Server) SetVNCDialer(dial func(context.Context) (*net.TCPConn, error)) {
+	s.dialVNCBackend = dial
+}
+
+func (s *Server) dialVNC(ctx context.Context) (*net.TCPConn, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	if s.dialVNCBackend != nil {
+		return s.dialVNCBackend(ctx)
+	}
+	var dialer net.Dialer
+	conn, err := dialer.DialContext(ctx, "tcp4", s.cfg.VNC.Listen)
+	if err != nil {
+		return nil, err
+	}
+	return conn.(*net.TCPConn), nil
 }
 
 func New(cfg config.Config, log *slog.Logger) (*Server, error) {

@@ -8,6 +8,7 @@
   --muted: #8b9395;
   --line: #e6e9e8;
   --sidebar-width: 236px;
+  --sidebar-toggle-size: 34px;
   --titlebar-height: max(48px, var(--mygo-titlebar-height, 0px));
 }
 * { box-sizing: border-box; }
@@ -33,7 +34,8 @@ button.danger:hover:enabled { background: #b34646; }
 .icon-button > .icon { width: 17px; height: 17px; }
 .icon-button:hover:enabled { color: #44534d; background: #00000007; }
 .icon-button:active:enabled { background: #0000000d; }
-.sidebar-toggle { position: fixed; z-index: 5; top: calc((var(--titlebar-height) - 28px) / 2); left: calc(var(--sidebar-width) - 50px); transition: left 160ms ease; }
+.sidebar-toggle { position: fixed; z-index: 5; width: var(--sidebar-toggle-size); height: var(--sidebar-toggle-size); top: calc((var(--titlebar-height) - var(--sidebar-toggle-size)) / 2); left: calc(var(--sidebar-width) - var(--sidebar-toggle-size) - 16px); transition: left 160ms ease; }
+.sidebar-toggle > .icon { width: 21px; height: 21px; }
 .sidebar-collapsed .sidebar-toggle { left: calc(var(--mygo-titlebar-inset-left, 0px) + 12px); }
 .sidebar { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 0 16px; background: #e9e9ec; border-right: 1px solid #00000012; user-select: none; }
 .sidebar-collapsed .sidebar { visibility: hidden; overflow: hidden; padding-inline: 0; border: 0; }
@@ -84,16 +86,16 @@ input::placeholder { color: #9aa29e; }
 .sidebar-footer strong { display: block; font-size: 11px; font-weight: 550; }
 .main { display: grid; grid-template-rows: var(--titlebar-height) minmax(0, 1fr) 36px; min-width: 0; min-height: 0; background: #f8f9fa; }
 .titlebar { --app-region: drag; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 calc(25px + var(--mygo-titlebar-inset-right, 0px)) 0 30px; background: #ffffffdf; border-bottom: 1px solid var(--line); user-select: none; }
-.sidebar-collapsed .titlebar { padding-left: calc(var(--mygo-titlebar-inset-left, 0px) + 52px); }
+.sidebar-collapsed .titlebar { padding-left: calc(var(--mygo-titlebar-inset-left, 0px) + var(--sidebar-toggle-size) + 24px); }
 .breadcrumb { display: flex; align-items: center; gap: 9px; min-width: 0; color: #53605c; font-size: 13px; font-weight: 550; }
 .breadcrumb .icon { width: 17px; height: 17px; color: #8a9590; }
 .breadcrumb > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .toolbar { --app-region: no-drag; display: flex; align-items: center; gap: 5px; flex: none; }
+.toolbar .icon { width: 16px; height: 16px; }
 .toolbar-divider { height: 15px; border-left: 1px solid #e5e9e7; margin: 0 3px; }
 .sort-control { position: relative; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 6px; color: #77817e; }
 .sort-control:hover { background: #00000007; }
 .sort-control:focus-within { outline: 2px solid #39a591; outline-offset: 2px; }
-.sort-control .icon { width: 17px; height: 17px; }
 .sort-control select { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; opacity: 0; border: 0; cursor: pointer; }
 .content { padding: 32px 30px; overflow-y: auto; min-height: 0; }
 .page-heading { display: flex; justify-content: space-between; align-items: center; gap: 15px; margin-bottom: 27px; }
@@ -164,6 +166,20 @@ dialog h2 { font-size: 19px; font-weight: 600; }
 label:not(.search, .sort-control) { display: grid; gap: 7px; color: #7f8c83; font-size: 11px; }
 input:not([type="checkbox"]), select { min-width: 0; }
 dialog input:not([type="checkbox"]), dialog select { display: block; width: 100%; padding: 9px 10px; border: 1px solid #dde5df; border-radius: 6px; background: #fdfefd; font-size: 12px; color: #4b5a51; }
+.select-field { position: relative; min-width: 0; }
+.select-field > select { appearance: none; padding-inline-end: 30px; cursor: pointer; }
+.select-field::after {
+  content: "";
+  position: absolute;
+  inset-inline-end: 13px;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  border: solid currentColor;
+  border-width: 0 1.5px 1.5px 0;
+  transform: translateY(-65%) rotate(45deg);
+  pointer-events: none;
+}
 .wide { grid-column: 1 / -1; }
 label.checkbox-row { display: flex; align-items: center; gap: 6px; margin-top: 17px; }
 input[type="checkbox"] { accent-color: var(--accent); }

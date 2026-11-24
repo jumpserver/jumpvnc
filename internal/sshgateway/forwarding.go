@@ -33,14 +33,12 @@ func (s *Server) forward(ctx context.Context, incoming ssh.NewChannel, log *slog
 		return
 	}
 
-	dialer := net.Dialer{Timeout: 3 * time.Second}
-	conn, err := dialer.DialContext(ctx, "tcp4", s.cfg.VNC.Listen)
+	backend, err := s.dialVNC(ctx)
 	if err != nil {
 		incoming.Reject(ssh.ConnectionFailed, "VNC backend unavailable")
 		log.Info("ssh.forward", "result", "failed", "reason", "backend_unavailable")
 		return
 	}
-	backend := conn.(*net.TCPConn)
 	defer backend.Close()
 	stop := context.AfterFunc(ctx, func() { backend.Close() })
 	defer stop()

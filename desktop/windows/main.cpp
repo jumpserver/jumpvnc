@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <d3d11.h>
 #include <dxgi1_2.h>
+#include <iphlpapi.h>
 #include <map>
 #include <rfb/keysym.h>
 #include <rfb/rfb.h>
@@ -26,6 +27,8 @@ struct ClientInput {
 static std::map<WORD, unsigned> keyOwners;
 static unsigned buttonOwners[3]{};
 static unsigned clientCount = 0;
+static DWORD consoleAgentPid = 0;
+static HANDLE sasRequest = nullptr;
 static int originX, originY;
 static void keyInput(WORD key, bool down, bool unicode = false) {
     INPUT i{};
@@ -39,7 +42,7 @@ static void keyInput(WORD key, bool down, bool unicode = false) {
     SendInput(1, &i, sizeof(i));
 }
 static void keyboard(rfbBool down, rfbKeySym sym, rfbClientPtr cl) {
-    if (!desktopAvailable || viewOnly || cl->viewOnly || !cl->clientData)
+    if (!desktopAvailable || viewOnly || cl->viewOnly || !cl->clientData || !onActiveDesktop())
         return;
     auto &state = *static_cast<ClientInput *>(cl->clientData);
     WORD vk = 0;
@@ -136,6 +139,12 @@ static void keyboard(rfbBool down, rfbKeySym sym, rfbClientPtr cl) {
                     vk = LOBYTE(k);
             }
         }
+    if (sasRequest && vk == VK_DELETE && (state.keys.count(VK_LCONTROL) || state.keys.count(VK_RCONTROL)) &&
+        (state.keys.count(VK_LMENU) || state.keys.count(VK_RMENU))) {
+        if (down)
+            SetEvent(sasRequest);
+        return;
+    }
     if (vk) {
         if (down) {
             if (state.keys.insert(vk).second)
@@ -162,7 +171,7 @@ static void keyboard(rfbBool down, rfbKeySym sym, rfbClientPtr cl) {
     }
 }
 static void pointer(int mask, int x, int y, rfbClientPtr cl) {
-    if (!desktopAvailable || viewOnly || cl->viewOnly || !cl->clientData || x < 0 || y < 0 ||
+    if (!desktopAvailable || viewOnly || cl->viewOnly || !cl->clientData || !onActiveDesktop() || x < 0 || y < 0 ||
         x >= cl->screen->width || y >= cl->screen->height)
         return;
     auto &state = *static_cast<ClientInput *>(cl->clientData);
@@ -202,16 +211,18 @@ static void releaseKeys(rfbClientPtr cl) {
     if (!cl || !cl->clientData)
         return;
     auto &state = *static_cast<ClientInput *>(cl->clientData);
+    const bool active = onActiveDesktop();
     for (WORD key : state.keys) {
         if (--keyOwners[key] == 0) {
-            keyInput(key, false);
+            if (active)
+                keyInput(key, false);
             keyOwners.erase(key);
         }
     }
     state.keys.clear();
     const DWORD ups[] = {MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_RIGHTUP};
     for (int b = 0; b < 3; ++b)
-        if ((state.buttons & (1 << b)) && buttonOwners[b] && --buttonOwners[b] == 0) {
+        if ((state.buttons & (1 << b)) && buttonOwners[b] && --buttonOwners[b] == 0 && active) {
             INPUT i{};
             i.type = INPUT_MOUSE;
             i.mi.dwFlags = ups[b];
@@ -226,8 +237,40 @@ static void disconnected(rfbClientPtr cl) {
     if (clientCount)
         --clientCount;
 }
+// A service backend can interact with Winlogon. Accept loopback connections
+// only from the Agent so local processes also go through SSH authentication.
+static bool fromConsoleAgent(rfbClientPtr cl) {
+    sockaddr_in peer{}, local{};
+    int peerSize = sizeof(peer), localSize = sizeof(local);
+    if (getpeername(cl->sock, reinterpret_cast<sockaddr *>(&peer), &peerSize) ||
+        getsockname(cl->sock, reinterpret_cast<sockaddr *>(&local), &localSize))
+        return false;
+    DWORD bytes = 0;
+    if (GetExtendedTcpTable(nullptr, &bytes, FALSE, AF_INET, TCP_TABLE_OWNER_PID_CONNECTIONS, 0) !=
+        ERROR_INSUFFICIENT_BUFFER)
+        return false;
+    std::vector<unsigned char> buffer;
+    for (int attempt = 0; attempt < 3 && bytes <= 16 * 1024 * 1024; ++attempt) {
+        buffer.resize(bytes);
+        DWORD result = GetExtendedTcpTable(buffer.data(), &bytes, FALSE, AF_INET, TCP_TABLE_OWNER_PID_CONNECTIONS, 0);
+        if (result == ERROR_INSUFFICIENT_BUFFER)
+            continue;
+        if (result != NO_ERROR)
+            return false;
+        const auto *table = reinterpret_cast<const MIB_TCPTABLE_OWNER_PID *>(buffer.data());
+        for (DWORD i = 0; i < table->dwNumEntries; ++i) {
+            const auto &row = table->table[i];
+            if (row.dwOwningPid == consoleAgentPid && row.dwLocalAddr == peer.sin_addr.s_addr &&
+                (USHORT)row.dwLocalPort == peer.sin_port && row.dwRemoteAddr == local.sin_addr.s_addr &&
+                (USHORT)row.dwRemotePort == local.sin_port)
+                return true;
+        }
+        return false;
+    }
+    return false;
+}
 static enum rfbNewClientAction connected(rfbClientPtr cl) {
-    if (clientCount >= 16)
+    if (clientCount >= 16 || (consoleCapture && !fromConsoleAgent(cl)))
         return RFB_CLIENT_REFUSE;
     cl->clientData = new ClientInput();
     cl->clientGoneHook = disconnected;
@@ -235,17 +278,92 @@ static enum rfbNewClientAction connected(rfbClientPtr cl) {
     ++clientCount;
     return RFB_CLIENT_ACCEPT;
 }
+static bool validSize(int width, int height) {
+    return width > 0 && height > 0 && width <= 16384 && height <= 16384 && (size_t)width * height <= 64000000;
+}
+struct GdiCapture {
+    HDC screen = nullptr, memory = nullptr;
+    HBITMAP bitmap = nullptr;
+    HGDIOBJ previous = nullptr;
+    void *pixels = nullptr;
+    int width = 0, height = 0;
+
+    ~GdiCapture() { reset(); }
+
+    void reset() {
+        if (previous && previous != HGDI_ERROR)
+            SelectObject(memory, previous);
+        if (bitmap)
+            DeleteObject(bitmap);
+        if (memory)
+            DeleteDC(memory);
+        if (screen)
+            ReleaseDC(nullptr, screen);
+        previous = nullptr;
+        bitmap = nullptr;
+        memory = screen = nullptr;
+        pixels = nullptr;
+    }
+
+    bool init() {
+        width = GetSystemMetrics(SM_CXSCREEN);
+        height = GetSystemMetrics(SM_CYSCREEN);
+        if (!validSize(width, height))
+            return false;
+        screen = GetDC(nullptr);
+        if (!screen)
+            return false;
+        memory = CreateCompatibleDC(screen);
+        if (!memory)
+            return false;
+        BITMAPINFO info{};
+        info.bmiHeader.biSize = sizeof(info.bmiHeader);
+        info.bmiHeader.biWidth = width;
+        info.bmiHeader.biHeight = -height;
+        info.bmiHeader.biPlanes = 1;
+        info.bmiHeader.biBitCount = 32;
+        info.bmiHeader.biCompression = BI_RGB;
+        bitmap = CreateDIBSection(memory, &info, DIB_RGB_COLORS, &pixels, nullptr, 0);
+        if (!bitmap || !pixels)
+            return false;
+        previous = SelectObject(memory, bitmap);
+        return previous && previous != HGDI_ERROR && update();
+    }
+
+    bool update() const {
+        return width == GetSystemMetrics(SM_CXSCREEN) && height == GetSystemMetrics(SM_CYSCREEN) &&
+               BitBlt(memory, 0, 0, width, height, screen, 0, 0, SRCCOPY | CAPTUREBLT) && GdiFlush();
+    }
+};
 struct Capture {
     ComPtr<ID3D11Device> device;
     ComPtr<ID3D11DeviceContext> context;
     ComPtr<IDXGIOutputDuplication> duplication;
     ComPtr<ID3D11Texture2D> staging;
+    GdiCapture gdi;
     int width = 0, height = 0;
-    bool init() {
+    void reset() {
         duplication.Reset();
         staging.Reset();
         context.Reset();
         device.Reset();
+        gdi.reset();
+    }
+    bool init(bool allowGdi, bool gdiOnly = false) {
+        reset();
+        if (!gdiOnly && initDxgi())
+            return true;
+        reset();
+        if (!allowGdi || !gdi.init()) {
+            gdi.reset();
+            return false;
+        }
+        width = gdi.width;
+        height = gdi.height;
+        originX = captureOriginX = originY = captureOriginY = 0;
+        return true;
+    }
+    bool initDxgi() {
         ComPtr<IDXGIFactory1> factory;
         if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))))
             return false;
@@ -283,8 +401,7 @@ struct Capture {
                 duplication->GetDesc(&dd);
                 width = (int)dd.ModeDesc.Width;
                 height = (int)dd.ModeDesc.Height;
-                if (width < 1 || height < 1 || width > 16384 || height > 16384 ||
-                    (size_t)width * height > 64000000)
+                if (!validSize(width, height))
                     return false;
                 originX = captureOriginX = desc.DesktopCoordinates.left;
                 originY = captureOriginY = desc.DesktopCoordinates.top;
@@ -303,6 +420,12 @@ struct Capture {
         return false;
     }
     int update(rfbScreenInfoPtr screen) {
+        if (gdi.pixels) {
+            if (!gdi.update())
+                return -1;
+            updatePixels(screen, static_cast<const char *>(gdi.pixels), (size_t)width * 4);
+            return 1;
+        }
         DXGI_OUTDUPL_FRAME_INFO info{};
         ComPtr<IDXGIResource> resource;
         HRESULT hr = duplication->AcquireNextFrame(0, &info, &resource);
@@ -327,6 +450,12 @@ struct Capture {
             duplication->ReleaseFrame();
             return -1;
         }
+        updatePixels(screen, static_cast<const char *>(map.pData), map.RowPitch);
+        context->Unmap(staging.Get(), 0);
+        duplication->ReleaseFrame();
+        return 1;
+    }
+    void updatePixels(rfbScreenInfoPtr screen, const char *pixels, size_t pitch) const {
         // Coalesce changed 64x64 tiles into horizontal runs. Never send unchanged pixels.
         for (int y = 0; y < height; y += 64) {
             int y2 = std::min(y + 64, height), run = -1;
@@ -336,11 +465,11 @@ struct Capture {
                 for (int row = y; row < y2 && !changed; row++)
                     changed =
                         memcmp(screen->frameBuffer + ((size_t)row * width + x) * 4,
-                               (char *)map.pData + (size_t)row * map.RowPitch + x * 4, (x2 - x) * 4) != 0;
+                               pixels + (size_t)row * pitch + x * 4, (x2 - x) * 4) != 0;
                 if (changed) {
                     for (int row = y; row < y2; row++)
                         memcpy(screen->frameBuffer + ((size_t)row * width + x) * 4,
-                               (char *)map.pData + (size_t)row * map.RowPitch + x * 4, (x2 - x) * 4);
+                               pixels + (size_t)row * pitch + x * 4, (x2 - x) * 4);
                     if (run < 0)
                         run = x;
                 } else if (run >= 0) {
@@ -351,9 +480,6 @@ struct Capture {
             if (run >= 0)
                 rfbMarkRectAsModified(screen, run, y, width, y2);
         }
-        context->Unmap(staging.Get(), 0);
-        duplication->ReleaseFrame();
-        return 1;
     }
 };
 static void serverFormat(rfbScreenInfoPtr screen) {
@@ -372,6 +498,42 @@ static BOOL WINAPI control(DWORD) {
     running = false;
     return TRUE;
 }
+static bool openClipboardOwner() {
+    clipboardWindow = CreateWindowExW(0, L"STATIC", L"SuperVNC Clipboard", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr,
+                                      GetModuleHandle(nullptr), nullptr);
+    clipboardSequence = GetClipboardSequenceNumber();
+    return clipboardWindow != nullptr;
+}
+static void closeClipboardOwner() {
+    if (clipboardWindow)
+        DestroyWindow(clipboardWindow);
+    clipboardWindow = nullptr;
+    pendingClipboard.clear();
+    clipboardWriteDeadline = 0;
+}
+struct ConsoleDesktop {
+    HDESK desktop = nullptr;
+
+    bool follow(FILE *log) {
+        if (desktop && onActiveDesktop())
+            return true;
+        closeClipboardOwner();
+        HDESK input = OpenInputDesktop(0, FALSE, DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS | DESKTOP_CREATEWINDOW);
+        wchar_t name[256]{};
+        if (!getDesktopName(input, name) || !SetThreadDesktop(input)) {
+            if (input)
+                CloseDesktop(input);
+            return false;
+        }
+        if (desktop)
+            CloseDesktop(desktop);
+        desktop = input;
+        if (!_wcsicmp(name, L"Default") && !openClipboardOwner())
+            fprintf(stderr, "clipboard.unavailable win32=%lu\n", GetLastError());
+        fprintf(log, "desktop.active name=%ls\n", name);
+        return true;
+    }
+};
 int wmain(int argc, wchar_t **argv) {
     SetProcessDPIAware();
     setvbuf(stdout, nullptr, _IONBF, 0);
@@ -379,9 +541,27 @@ int wmain(int argc, wchar_t **argv) {
     Options options;
     if (!parseOptions(argc, argv, options)) {
         fprintf(stderr, "Usage: svnc-desktop --listen 127.0.0.1:PORT --password-file PATH [--view-only] "
-                        "[--parent-pid PID]\n");
+                        "[--parent-pid PID] [--console-session ID --log-file PATH --sas-event NAME]\n");
         return 1;
     }
+    consoleCapture = options.consoleSession != 0;
+    if (consoleCapture) {
+        consoleAgentPid = options.parentPid;
+        if (!_wfreopen(options.logFile.c_str(), L"a", stderr))
+            return 1;
+        setvbuf(stderr, nullptr, _IONBF, 0);
+        DWORD session = 0;
+        if (!ProcessIdToSessionId(GetCurrentProcessId(), &session) || session != options.consoleSession) {
+            fprintf(stderr, "Desktop process must run in its designated console session.\n");
+            return 1;
+        }
+        sasRequest = OpenEventW(EVENT_MODIFY_STATE, FALSE, options.sasEvent.c_str());
+        if (!sasRequest) {
+            fprintf(stderr, "Cannot open console SAS event: %lu\n", GetLastError());
+            return 1;
+        }
+    }
+    FILE *statusLog = consoleCapture ? stderr : stdout;
     viewOnly = options.viewOnly;
     std::string password;
     if (!readPassword(options.passwordFile, password)) {
@@ -397,18 +577,22 @@ int wmain(int argc, wchar_t **argv) {
         }
     }
     Capture capture;
-    if (!capture.init()) {
+    ConsoleDesktop desktop;
+    bool captureReady = (!consoleCapture || desktop.follow(statusLog)) && capture.init(consoleCapture);
+    if (!captureReady && !consoleCapture) {
         fprintf(stderr, "Cannot capture current interactive user desktop.\n");
         return 2;
     }
+    desktopAvailable = captureReady && !consoleCapture;
+    int width = captureReady ? capture.width : 1024, height = captureReady ? capture.height : 768;
     // Do not pass application arguments to LibVNCServer's permissive argument parser.
     int rfbArgc = 1;
     char name[] = "svnc-desktop";
     char *rfbArgv[] = {name, nullptr};
-    rfbScreenInfoPtr s = rfbGetScreen(&rfbArgc, rfbArgv, capture.width, capture.height, 8, 3, 4);
+    rfbScreenInfoPtr s = rfbGetScreen(&rfbArgc, rfbArgv, width, height, 8, 3, 4);
     if (!s)
         return 3;
-    std::vector<char> pixels((size_t)capture.width * capture.height * 4);
+    std::vector<char> pixels((size_t)width * height * 4);
     s->frameBuffer = pixels.data();
     serverFormat(s);
     s->desktopName = "SuperVNC Server / LibVNCServer / Windows DXGI";
@@ -441,24 +625,38 @@ int wmain(int argc, wchar_t **argv) {
         rfbScreenCleanup(s);
         return 4;
     }
-    clipboardWindow = CreateWindowExW(0, L"STATIC", L"SuperVNC Clipboard", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr,
-                                      GetModuleHandle(nullptr), nullptr);
-    if (!clipboardWindow) {
+    if (!consoleCapture && !openClipboardOwner()) {
         fprintf(stderr, "Cannot initialize clipboard owner.\n");
         rfbShutdownServer(s, TRUE);
         rfbScreenCleanup(s);
         return 6;
     }
-    clipboardSequence = GetClipboardSequenceNumber();
     SetConsoleCtrlHandler(control, TRUE);
-    printf("READY backend=libvncserver version=%s primary=%dx%d listen=127.0.0.1:%d view_only=%d "
-           "file_transfer=sftp\n",
-           LIBVNCSERVER_PACKAGE_VERSION, capture.width, capture.height, options.port, (int)viewOnly);
+    fprintf(statusLog, "READY backend=libvncserver version=%s primary=%dx%d listen=127.0.0.1:%d view_only=%d "
+                       "console_session=%lu capture=%s\n",
+            LIBVNCSERVER_PACKAGE_VERSION, width, height, options.port, (int)viewOnly, options.consoleSession,
+            captureReady ? (capture.gdi.pixels ? "gdi" : "dxgi") : "pending");
     ULONGLONG nextCapture = 0, nextClipboard = 0, nextRecovery = 0;
-    bool captureReady = true;
+    ULONGLONG firstFrameDeadline = GetTickCount64() + 2000;
+    bool tryGdi = false;
+    auto loseCapture = [&] {
+        captureReady = desktopAvailable = false;
+        capture.reset();
+        auto it = rfbGetClientIterator(s);
+        while (auto cl = rfbClientIteratorNext(it))
+            releaseKeys(cl);
+        rfbReleaseClientIterator(it);
+        std::fill(pixels.begin(), pixels.end(), 0);
+        rfbMarkRectAsModified(s, 0, 0, s->width, s->height);
+        fprintf(stderr, "capture.unavailable: waiting for desktop/display recovery\n");
+    };
     while (running && rfbIsActive(s)) {
         if (parent && WaitForSingleObject(parent, 0) != WAIT_TIMEOUT)
             break;
+        if (consoleCapture && WTSGetActiveConsoleSessionId() != options.consoleSession) {
+            fprintf(stderr, "console.changed: waiting for the service to restart in the active console session\n");
+            break;
+        }
         MSG message;
         while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
             TranslateMessage(&message);
@@ -472,9 +670,14 @@ int wmain(int argc, wchar_t **argv) {
                 rfbCloseClient(cl);
         }
         rfbReleaseClientIterator(handshakes);
+        if (consoleCapture && captureReady && !onActiveDesktop()) {
+            loseCapture();
+            nextRecovery = now;
+            tryGdi = false;
+        }
         if (!captureReady && now >= nextRecovery) {
             nextRecovery = now + 1000;
-            if (capture.init()) {
+            if ((!consoleCapture || desktop.follow(statusLog)) && capture.init(consoleCapture, tryGdi)) {
                 if (capture.width != s->width || capture.height != s->height) {
                     std::vector<char> resized((size_t)capture.width * capture.height * 4);
                     // Clients unable to negotiate resize must reconnect instead of interpreting stale
@@ -488,27 +691,28 @@ int wmain(int argc, wchar_t **argv) {
                     pixels.swap(resized);
                     serverFormat(s);
                 }
-                captureReady = desktopAvailable = true;
-                printf("capture.ready primary=%dx%d\n", capture.width, capture.height);
+                captureReady = true;
+                desktopAvailable = !consoleCapture;
+                firstFrameDeadline = now + 2000;
+                fprintf(statusLog, "capture.ready primary=%dx%d method=%s\n", capture.width, capture.height,
+                        capture.gdi.pixels ? "gdi" : "dxgi");
             }
+            tryGdi = false;
         }
-        if (captureReady && s->clientHead && now >= nextCapture) {
-            nextCapture = now + 16;
-            if (capture.update(s) < 0) {
-                captureReady = desktopAvailable = false;
+        if (captureReady && (s->clientHead || (consoleCapture && !desktopAvailable)) && now >= nextCapture) {
+            nextCapture = now + (capture.gdi.pixels ? 33 : 16);
+            int result = capture.update(s);
+            if (result > 0) {
+                desktopAvailable = true;
+            } else if (result < 0 || (consoleCapture && !desktopAvailable && now >= firstFrameDeadline)) {
+                tryGdi = consoleCapture && !capture.gdi.pixels;
+                loseCapture();
                 nextRecovery = now + 250;
-                auto it = rfbGetClientIterator(s);
-                while (auto cl = rfbClientIteratorNext(it))
-                    releaseKeys(cl);
-                rfbReleaseClientIterator(it);
-                std::fill(pixels.begin(), pixels.end(), 0);
-                rfbMarkRectAsModified(s, 0, 0, s->width, s->height);
-                fprintf(stderr, "capture.unavailable: waiting for ordinary desktop/display recovery\n");
             }
         }
-        if (s->clientHead)
+        if (s->clientHead && (!consoleCapture || desktopAvailable))
             pollCursor(s);
-        if (now >= nextClipboard) {
+        if (clipboardWindow && now >= nextClipboard && onActiveDesktop()) {
             nextClipboard = now + 100;
             pollClipboard(s);
         }
@@ -517,7 +721,9 @@ int wmain(int argc, wchar_t **argv) {
     }
     rfbShutdownServer(s, TRUE);
     rfbScreenCleanup(s);
-    DestroyWindow(clipboardWindow);
+    closeClipboardOwner();
+    if (sasRequest)
+        CloseHandle(sasRequest);
     if (parent)
         CloseHandle(parent);
     return 0;

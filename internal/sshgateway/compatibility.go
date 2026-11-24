@@ -46,8 +46,7 @@ func (s *Server) ServeVNC(ctx context.Context, listener net.Listener) error {
 		active.Go(func() {
 			defer func() { <-slots }()
 			defer conn.Close()
-			dialer := net.Dialer{Timeout: 3 * time.Second}
-			backend, err := dialer.DialContext(ctx, "tcp4", s.cfg.VNC.Listen)
+			backend, err := s.dialVNC(ctx)
 			if err != nil {
 				log.Info("vnc.compatibility", "result", "failed", "reason", "backend_unavailable")
 				return
@@ -55,7 +54,7 @@ func (s *Server) ServeVNC(ctx context.Context, listener net.Listener) error {
 			defer backend.Close()
 			viewer := &idleConn{Conn: conn, timeout: time.Duration(s.cfg.SSH.Limits.IdleTimeoutSeconds) * time.Second}
 			viewer.enable()
-			s.relayVNC(ctx, viewer, backend.(*net.TCPConn), log)
+			s.relayVNC(ctx, viewer, backend, log)
 		})
 	}
 }

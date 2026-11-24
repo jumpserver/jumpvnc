@@ -5,3 +5,8 @@ Use case: logo-brand. Create one finished macOS application Dock icon for SuperV
 
 Final refinement prompt:
 Polish this exact SuperVNC macOS app icon for production. Preserve the monitor, the two diagonal arrows, the jade/emerald tile, layout, and rounded-square silhouette. Remove all stray floating teal specks, scratches, and ragged fragments outside the tile, especially above its upper edge. Give the tile a smooth clean antialiased outer contour. Use genuinely transparent pixels everywhere outside the icon and its subtle close-fitting drop shadow. Keep the strong white monitor and simple arrows legible at Dock sizes. No text and no extra objects.
+
+Background color revision:
+Change only the rounded-square tile to JumpServer green, retaining the existing bevel and shadow. Keep the white monitor, stand, glass, diagonal arrows, and transparent outline from the original.
+
+The built-in ImageGen edit used #1AB394 as a reference. The final tile was color-corrected to the requested #148F76 midtone and composited with the original foreground and alpha channel.

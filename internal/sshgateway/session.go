@@ -3,7 +3,6 @@ package sshgateway
 import (
 	"context"
 	"log/slog"
-	"net"
 	"time"
 
 	"github.com/pkg/sftp"
@@ -89,14 +88,12 @@ func rejectRequest(req *ssh.Request, log *slog.Logger) {
 }
 
 func (s *Server) vncSubsystem(ctx context.Context, channel ssh.Channel, requests <-chan *ssh.Request, req *ssh.Request, log *slog.Logger) {
-	dialer := net.Dialer{Timeout: 3 * time.Second}
-	conn, err := dialer.DialContext(ctx, "tcp4", s.cfg.VNC.Listen)
+	backend, err := s.dialVNC(ctx)
 	if err != nil {
 		rejectRequest(req, log)
 		log.Info("vnc.subsystem", "result", "failed", "reason", "backend_unavailable")
 		return
 	}
-	backend := conn.(*net.TCPConn)
 	defer backend.Close()
 	if req.WantReply && req.Reply(true, nil) != nil {
 		return

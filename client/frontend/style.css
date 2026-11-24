@@ -71,6 +71,20 @@ button.danger:hover:enabled { background: #fff4f4; }
 .wide { grid-column: 1 / -1; }
 label { display: grid; gap: 7px; color: #747c87; }
 input:not([type="checkbox"]), select, textarea { width: 100%; min-width: 0; padding: 8px 9px; color: #39424f; background: #fff; border: 1px solid #dce1e7; border-radius: 5px; }
+.select-field { position: relative; min-width: 0; }
+.select-field > select { display: block; appearance: none; padding-inline-end: 30px; cursor: pointer; }
+.select-field::after {
+  content: "";
+  position: absolute;
+  inset-inline-end: 13px;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  border: solid currentColor;
+  border-width: 0 1.5px 1.5px 0;
+  transform: translateY(-65%) rotate(45deg);
+  pointer-events: none;
+}
 input::placeholder { color: #a0a7b0; }
 .checkbox-row { display: flex; align-items: center; gap: 6px; margin-top: 14px; font-size: 11px; }
 input[type="checkbox"], progress { accent-color: var(--accent); }

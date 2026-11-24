@@ -1,0 +1,20 @@
+ssh:
+  listen: "0.0.0.0:5922"
+  host_key_file: ssh_host_ed25519_key
+  authorized_keys_file: authorized_keys
+  user: vncuser
+  allow_vnc: true
+
+sftp:
+  mode: disabled
+
+vnc:
+  engine: libvncserver
+  listen: "127.0.0.1:5900"
+  executable: backends/windows/svnc-desktop.exe
+  password_file: vnc-password.txt
+  view_only: false
+  compatibility:
+    enabled: false
+
+audit: true

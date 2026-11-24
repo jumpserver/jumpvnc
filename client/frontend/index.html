@@ -69,9 +69,9 @@
     <form id="server-form">
       <div class="dialog-heading"><div><h2 id="server-dialog-title">添加连接</h2><p>保存服务器信息，在独立窗口中打开远程桌面。</p></div><button type="button" class="icon-button dialog-close" aria-label="关闭"><svg class="icon"><use href="#i-close"/></svg></button></div>
       <div class="fields">
-        <label class="wide">协议<select name="protocol"><option value="svnc">SVNC</option><option value="vnc">VNC</option></select></label>
+        <label class="wide">协议<span class="select-field"><select name="protocol"><option value="svnc">SVNC</option><option value="vnc">VNC</option></select></span></label>
         <label>连接名称<input name="name" required maxlength="100" placeholder="例如：设计工作站" autocomplete="off"></label>
-        <label>所属分类<select name="folderId"></select></label>
+        <label>所属分类<span class="select-field"><select name="folderId"></select></span></label>
         <label>服务器地址<input name="host" required placeholder="IP 地址或主机名" autocomplete="off"></label>
         <label>端口<input name="port" type="number" min="1" max="65535" placeholder="5922"></label>
         <label class="wide" data-user>用户名<input name="user" placeholder="vncuser" autocomplete="off"></label>

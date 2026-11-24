@@ -22,7 +22,7 @@ if(NOT JPEG_FOUND OR NOT ZLIB_FOUND)
 endif()
 add_executable(svnc-desktop main.cpp)
 target_include_directories(svnc-desktop PRIVATE "${SVNC_DEPENDENCIES}/libvncserver/include" ${CMAKE_CURRENT_BINARY_DIR}/libvncserver/include ${JPEG_INCLUDE_DIR} ${ZLIB_INCLUDE_DIR})
-target_link_libraries(svnc-desktop PRIVATE vncserver d3d11 dxgi user32 gdi32)
+target_link_libraries(svnc-desktop PRIVATE vncserver d3d11 dxgi user32 gdi32 iphlpapi)
 
 install(TARGETS svnc-desktop RUNTIME DESTINATION backends/windows)
 install(FILES COPYING DESTINATION licenses/libvncserver)

@@ -19,6 +19,12 @@ import (
 	"sshvnc/internal/config"
 )
 
+type Backend struct {
+	Exited <-chan error
+	Stop   func()
+	Dial   func(context.Context) (*net.TCPConn, error)
+}
+
 // Start waits for the configured RFB endpoint. An external backend remains
 // under its own supervisor. A managed backend reports termination on exited.
 func Start(ctx context.Context, cfg config.VNC, log *slog.Logger) (exited <-chan error, stop func(), err error) {
@@ -216,6 +222,13 @@ func ValidateDesktopPassword(password string) error {
 }
 
 func waitReady(ctx context.Context, cfg config.VNC, exited <-chan error) error {
+	return waitForRFB(ctx, cfg, exited, func(ctx context.Context) (net.Conn, error) {
+		var dialer net.Dialer
+		return dialer.DialContext(ctx, "tcp4", cfg.Listen)
+	})
+}
+
+func waitForRFB(ctx context.Context, cfg config.VNC, exited <-chan error, dial func(context.Context) (net.Conn, error)) error {
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(cfg.StartupTimeoutSeconds)*time.Second)
 	defer cancel()
 	ticker := time.NewTicker(200 * time.Millisecond)
@@ -227,18 +240,17 @@ func waitReady(ctx context.Context, cfg config.VNC, exited <-chan error) error {
 		case <-ctx.Done():
 			return fmt.Errorf("waiting for RFB at %s: %w", cfg.Listen, ctx.Err())
 		case <-ticker.C:
-			if isRFB(ctx, cfg.Listen) {
+			if isRFB(ctx, dial) {
 				return nil
 			}
 		}
 	}
 }
 
-func isRFB(ctx context.Context, address string) bool {
+func isRFB(ctx context.Context, dial func(context.Context) (net.Conn, error)) bool {
 	ctx, cancel := context.WithTimeout(ctx, 400*time.Millisecond)
 	defer cancel()
-	dialer := net.Dialer{}
-	conn, err := dialer.DialContext(ctx, "tcp4", address)
+	conn, err := dial(ctx)
 	if err != nil {
 		return false
 	}

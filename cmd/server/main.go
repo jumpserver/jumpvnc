@@ -25,18 +25,35 @@ func main() {
 	}
 	name := flag.String("config", "config.yaml", "path to the YAML configuration")
 	noTray := flag.Bool("no-tray", false, "run in the foreground without a notification area icon (Windows)")
+	service := flag.Bool("service", false, "run under the Windows Service Control Manager")
 	flag.Parse()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil)).With("product", productName)
-	if err := runAgent(ctx, *name, *noTray, log); err != nil && ctx.Err() == nil {
+	var err error
+	if *service {
+		err = runWindowsService(ctx, *name)
+	} else {
+		err = runAgent(ctx, *name, *noTray, log)
+	}
+	if err != nil && ctx.Err() == nil {
 		log.Error("agent.error", "error", err)
 		os.Exit(1)
 	}
 }
 
 func run(ctx context.Context, name string, log *slog.Logger, ready func()) error {
+	return runWithBackend(ctx, name, log, ready, func(ctx context.Context, cfg config.Config, log *slog.Logger) (vnc.Backend, error) {
+		if !cfg.SSH.AllowVNC {
+			return vnc.Backend{}, nil
+		}
+		exited, stop, err := vnc.Start(ctx, cfg.VNC, log)
+		return vnc.Backend{Exited: exited, Stop: stop}, err
+	})
+}
+
+func runWithBackend(ctx context.Context, name string, log *slog.Logger, ready func(), startBackend func(context.Context, config.Config, *slog.Logger) (vnc.Backend, error)) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -62,15 +79,14 @@ func run(ctx context.Context, name string, log *slog.Logger, ready func()) error
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	var exited <-chan error
-	if cfg.SSH.AllowVNC {
-		var stop func()
-		exited, stop, err = vnc.Start(ctx, cfg.VNC, log)
-		if err != nil {
-			return err
-		}
-		defer stop()
+	backend, err := startBackend(ctx, cfg, log)
+	if err != nil {
+		return err
 	}
+	if backend.Stop != nil {
+		defer backend.Stop()
+	}
+	gateway.SetVNCDialer(backend.Dial)
 	var compatibility net.Listener
 	if cfg.VNC.Compatibility.Enabled {
 		compatibility, err = listenTCP(cfg.VNC.Compatibility.Listen)
@@ -79,7 +95,7 @@ func run(ctx context.Context, name string, log *slog.Logger, ready func()) error
 		}
 		defer compatibility.Close()
 	}
-	return serve(ctx, cancel, listener, compatibility, gateway, exited, cfg, log, ready)
+	return serve(ctx, cancel, listener, compatibility, gateway, backend.Exited, cfg, log, ready)
 }
 
 func serve(ctx context.Context, cancel context.CancelFunc, listener, compatibility net.Listener, gateway *sshgateway.Server, exited <-chan error, cfg config.Config, log *slog.Logger, ready func()) error {
