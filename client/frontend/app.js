@@ -289,6 +289,7 @@ async function connect(event) {
       updateCredentialFields(profile);
     }
     let connection;
+    const confirmedHosts = new Set();
     while (connecting && !disconnecting) {
       connection = await call('Connect', profile);
       if (disconnecting || !connecting) return;
@@ -299,7 +300,7 @@ async function connect(event) {
       }
       if (!connection.hostKey) break;
       const identity = connection.hostKey;
-      if (profile.trustHostKey) throw new Error('服务器身份发生变化，请重新连接并核对指纹');
+      if (confirmedHosts.has(identity.host)) throw new Error('服务器身份发生变化，请重新连接并核对指纹');
       $('host-key-host').textContent = identity.host;
       $('host-key-fingerprint').textContent = `${identity.algorithm} · ${identity.fingerprint}`;
       const dialog = $('host-key-dialog');
@@ -311,6 +312,8 @@ async function connect(event) {
         return;
       }
       profile.trustHostKey = identity.fingerprint;
+      profile.trustHost = identity.host;
+      confirmedHosts.add(identity.host);
     }
     if (disconnecting || !connecting) return;
     filesAvailable = connection.files;

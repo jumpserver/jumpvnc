@@ -60,7 +60,10 @@ jobs:
           python3 - <<'PY'
           import hashlib, io, json, pathlib, re, shutil, tarfile, zipfile
           commit = json.load(open('build.json'))['headSha']
-          names = ['jumpvnc-viewer-macos-universal.zip', 'jumpvnc-server-linux-amd64.tar.gz',
+          names = ['jumpvnc-viewer-macos-universal.zip', 'jumpvnc-viewer-windows-amd64.zip',
+                   'jumpvnc-viewer-windows-amd64-setup.exe',
+                   'jumpvnc-viewer-linux-amd64.tar.gz', 'jumpvnc-viewer-linux-arm64.tar.gz',
+                   'jumpvnc-server-linux-amd64.tar.gz',
                    'jumpvnc-server-linux-arm64.tar.gz', 'jumpvnc-server-windows-amd64.zip',
                    'jumpvnc-server-windows-amd64-setup.exe']
           output = pathlib.Path('release-files')
@@ -100,7 +103,7 @@ jobs:
               if data is not None:
                   with tarfile.open(fileobj=io.BytesIO(data), mode='r:gz') as source:
                       assert source.pax_headers.get('comment') == commit, f'Source commit mismatch: {name}'
-                      # The macOS archive contains the client module; its project license is at the package root.
+                      # Viewer archives contain the client module; the project license is at the package root.
               shutil.copy2(path, output / name)
               shutil.copy2(checksum, output / checksum.name)
               print(digest, name)

@@ -30,9 +30,9 @@ TigerVNC 仍是受支持的可选后端。`configs/server.example.yaml` 使用�
 
 使用该配置时，通过 `vncpasswd` 生成配置中引用的 `vnc.passwd`。LibVNCServer 使用的是 1–8 字节可打印 ASCII 明文密码文件 `vnc-password.txt`，两种密码文件格式不能混用。
 
-## macOS 客户端
+## 桌面客户端
 
-需要 macOS、Go 1.27.3 或更新版本，以及 Node.js 和 npm。客户端使用独立的 Go 模块。
+支持 macOS、Windows、Linux，需要 Go 1.27.3 或更新版本，以及 Node.js 和 npm。客户端使用独立的 Go 模块。SSH、跳板机与 SFTP 均由 Go 实现，无需本机 `ssh` 命令。
 
 ```bash
 cd client
@@ -45,6 +45,15 @@ Apple Silicon 构建结果为 `client/build/darwin-arm64/JumpVNC.app`。在 `cli
 ```bash
 go tool mygo build -platform darwin/universal -skip-dmg
 ```
+
+Windows 和 Linux 构建：
+
+```bash
+go tool mygo build -platform windows/amd64
+go tool mygo build -platform linux/amd64,linux/arm64
+```
+
+Windows 构建输出可执行文件与 NSIS 安装程序；Linux 输出应用归档、用户安装脚本、Debian / RPM 包及 PKGBUILD。跨平台只构建 Windows 可执行文件时可加 `-skip-installer`。运行依赖、安装方式和平台功能限制见 [客户端文档](../client/README.md#安装)。CI 在 Windows amd64、Linux amd64/arm64 上分别测试并打包；发布流程要求所有新增产物及校验文件齐全。
 
 客户端实现、配置与性能指标见 [客户端文档](../client/README.md)。`client-libvnc` 是独立实验客户端，未替换正式 MyGo / noVNC 客户端。
 

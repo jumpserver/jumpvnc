@@ -4,10 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -20,6 +18,7 @@ const sshTimeout = 12 * time.Second
 
 type Profile struct {
 	TrustHostKey      string `json:"trustHostKey,omitempty"`
+	TrustHost         string `json:"trustHost,omitempty"`
 	Transport         string `json:"transport"`
 	Host              string `json:"host"`
 	Port              int    `json:"port"`
@@ -129,7 +128,7 @@ func (p Profile) dial(ctx context.Context) (*ssh.Client, error) {
 	if p.Jump == "" {
 		raw, err = (&net.Dialer{}).DialContext(ctx, "tcp", address)
 	} else {
-		raw, err = dialJump(p.Jump, address)
+		raw, err = dialJump(ctx, p, address)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("连接 Agent: %w", err)
@@ -150,44 +149,6 @@ type targetAddr string
 
 func (a targetAddr) Network() string { return "tcp" }
 func (a targetAddr) String() string  { return string(a) }
-
-// OpenSSH handles the jump host, including its existing ssh_config and keys.
-// Closing this transport also ends the OpenSSH stdio forward.
-func dialJump(jump, target string) (net.Conn, error) {
-	local, relay := net.Pipe()
-	cmd := exec.Command("/usr/bin/ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
-		"-o", "StrictHostKeyChecking=yes", "-o", "ClearAllForwardings=yes", "-W", target, jump)
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		local.Close()
-		relay.Close()
-		return nil, err
-	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		stdin.Close()
-		local.Close()
-		relay.Close()
-		return nil, err
-	}
-	cmd.Stderr = io.Discard
-	if err := cmd.Start(); err != nil {
-		local.Close()
-		relay.Close()
-		return nil, err
-	}
-	go func() {
-		io.Copy(stdin, relay)
-		stdin.Close()
-		cmd.Process.Kill()
-	}()
-	go func() {
-		io.Copy(relay, stdout)
-		relay.Close()
-		cmd.Wait()
-	}()
-	return local, nil
-}
 
 // Profiles saved before subsystems were introduced keep their original tunnel.
 func (p Profile) validateTransport() error {

@@ -143,8 +143,9 @@ func (s *session) startBridge(rawVNC io.ReadWriteCloser) (string, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /rfb/"+token, func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
+		// WebView2 serves the bundled page at http://mygo.localhost;
 		// WKWebView can serialize its bundled custom-scheme origin as null.
-		if r.Host != address || (origin != "mygo://localhost" && origin != "null") {
+		if r.Host != address || (origin != "mygo://localhost" && origin != "http://mygo.localhost" && origin != "null") {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}

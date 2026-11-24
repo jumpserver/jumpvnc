@@ -41,7 +41,7 @@ func identityFixture(t *testing.T, filename string) ssh.Signer {
 
 func TestServerIdentityConfirmation(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	setTestHome(t, dir)
 	address := "desktop.example:5922"
 	key := identityFixture(t, "").PublicKey()
 	profile := Profile{}
@@ -66,10 +66,7 @@ func TestServerIdentityConfirmation(t *testing.T) {
 	if err := check(address, targetAddr(address), key); err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Stat(filename)
-	if err != nil || info.Mode().Perm() != 0600 {
-		t.Fatalf("identity permissions: %v, %v", info, err)
-	}
+	assertPrivateFile(t, filename)
 	before, _ := os.ReadFile(filename)
 	changed := identityFixture(t, "").PublicKey()
 	profile.TrustHostKey = ssh.FingerprintSHA256(changed)
@@ -90,13 +87,13 @@ func TestAutomaticIdentityAndHostKeyHandshake(t *testing.T) {
 
 func testAutomaticIdentity(t *testing.T, source string) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
+	setTestHome(t, dir)
 	t.Setenv("SSH_AUTH_SOCK", "")
 	if source != "agent" {
 		identityFixture(t, filepath.Join(dir, ".ssh", "id_ed25519"))
 	}
 	if source != "file" {
-		socketDir, err := os.MkdirTemp("/tmp", "svnc-agent-")
+		socketDir, err := os.MkdirTemp("", "svnc-agent-")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -174,7 +171,7 @@ func testAutomaticIdentity(t *testing.T, source string) {
 }
 
 func TestAutomaticJumpHostIdentities(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	first := Profile{Jump: "first"}
 	second := Profile{Jump: "second"}
 	address := "127.0.0.1:5922"
@@ -208,9 +205,20 @@ func TestAutomaticJumpHostIdentities(t *testing.T) {
 	}
 }
 
+func TestHostConfirmationIsScopedToEndpoint(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	key := identityFixture(t, "").PublicKey()
+	p := Profile{TrustHost: "jump.example:22", TrustHostKey: ssh.FingerprintSHA256(key)}
+	address := "desktop.example:5922"
+	var challenge *HostKeyChallenge
+	if err := p.hostKeyCallback(address, address)(address, targetAddr(address), key); !errors.As(err, &challenge) || challenge.Host != address {
+		t.Fatalf("jump confirmation trusted another endpoint with the same key: %v", err)
+	}
+}
+
 func TestStoredPasswordFollowsPinnedServerIdentity(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	dir := filepath.Join(home, ".ssh", "sshvnc-g15")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
@@ -236,7 +244,7 @@ func TestStoredPasswordFollowsPinnedServerIdentity(t *testing.T) {
 }
 
 func TestSSHPasswordAuthentication(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	t.Setenv("SSH_AUTH_SOCK", "")
 	host := identityFixture(t, "")
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")

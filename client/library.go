@@ -93,7 +93,7 @@ func (s *libraryStore) load() (Library, error) {
 		serverIDs[server.ID] = true
 		server.Profile.VNCPassword = ""
 		server.Profile.SSHPassword = ""
-		server.Profile.TrustHostKey = ""
+		server.Profile.TrustHostKey, server.Profile.TrustHost = "", ""
 		if server.Profile.Transport == "" {
 			server.Profile.Transport = "forward"
 		}
@@ -114,7 +114,7 @@ func (s *libraryStore) update(change func(*Library) error) (Library, error) {
 	for i := range lib.Servers {
 		lib.Servers[i].Profile.VNCPassword = ""
 		lib.Servers[i].Profile.SSHPassword = ""
-		lib.Servers[i].Profile.TrustHostKey = ""
+		lib.Servers[i].Profile.TrustHostKey, lib.Servers[i].Profile.TrustHost = "", ""
 	}
 	data, err := json.MarshalIndent(lib, "", "  ")
 	if err != nil {

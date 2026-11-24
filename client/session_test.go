@@ -175,3 +175,42 @@ func TestFileSessionAfterDisconnect(t *testing.T) {
 		t.Fatal("disconnected file session accepted")
 	}
 }
+
+func TestDesktopBridgeOrigins(t *testing.T) {
+	for _, origin := range []string{"mygo://localhost", "http://mygo.localhost", "null", "", "http://localhost", "http://evil.mygo.localhost", "https://example.com"} {
+		t.Run(origin, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			defer cancel()
+			s := &session{ctx: ctx, cancel: cancel}
+			defer s.close()
+			raw, peer := net.Pipe()
+			defer raw.Close()
+			defer peer.Close()
+			url, err := s.startBridge(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ws, response, err := websocket.Dial(ctx, url, &websocket.DialOptions{HTTPHeader: http.Header{"Origin": {origin}}})
+			allowed := origin == "mygo://localhost" || origin == "http://mygo.localhost" || origin == "null"
+			if !allowed {
+				if err == nil {
+					ws.CloseNow()
+					t.Fatal("untrusted origin accepted")
+				}
+				if response == nil || response.StatusCode != http.StatusForbidden {
+					t.Fatalf("unexpected rejection: %v, %v", response, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer ws.CloseNow()
+			go peer.Write([]byte("RFB 003.008\n"))
+			_, data, err := ws.Read(ctx)
+			if err != nil || string(data) != "RFB 003.008\n" {
+				t.Fatalf("desktop bridge: %q, %v", data, err)
+			}
+		})
+	}
+}

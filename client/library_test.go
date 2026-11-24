@@ -46,10 +46,7 @@ func TestLibraryRoundTripAndFolderRemoval(t *testing.T) {
 	if bytes.Contains(data, []byte("never-persist-this")) {
 		t.Fatal("password persisted")
 	}
-	info, _ := os.Stat(s.filename)
-	if info.Mode().Perm() != 0600 {
-		t.Fatalf("config permissions: %v", info.Mode())
-	}
+	assertPrivateFile(t, s.filename)
 	// Reload through a separate store, as after restarting the app.
 	reopened := &libraryStore{filename: s.filename}
 	lib, err = reopened.read()
@@ -150,7 +147,7 @@ func TestLibraryConcurrentMutationsDoNotLoseConnections(t *testing.T) {
 }
 
 func TestSubsystemProfileAndLegacyLibrary(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	profile := defaultProfile()
 	if profile.Transport != "subsystem" || profile.Port != 5922 {
 		t.Fatalf("unexpected default: %+v", profile)
@@ -190,12 +187,12 @@ func TestSubsystemProfileAndLegacyLibrary(t *testing.T) {
 
 func TestMinimalSVNCProfile(t *testing.T) {
 	s := testLibrary(t)
-	lib, err := s.saveServer(Server{Name: "desktop", Profile: Profile{Host: "desktop.example", TrustHostKey: "temporary-confirmation"}})
+	lib, err := s.saveServer(Server{Name: "desktop", Profile: Profile{Host: "desktop.example", TrustHostKey: "temporary-confirmation", TrustHost: "temporary-endpoint"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	p := lib.Servers[0].Profile
-	if p.Port != 5922 || p.User != "" || p.Transport != "subsystem" || p.TrustHostKey != "" {
+	if p.Port != 5922 || p.User != "" || p.Transport != "subsystem" || p.TrustHostKey != "" || p.TrustHost != "" {
 		t.Fatalf("unexpected minimal profile defaults: %+v", p)
 	}
 	if p.Identity != "" || p.KnownHosts != "" {
@@ -205,7 +202,7 @@ func TestMinimalSVNCProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(data, []byte("temporary-confirmation")) {
+	if bytes.Contains(data, []byte("temporary-confirmation")) || bytes.Contains(data, []byte("temporary-endpoint")) {
 		t.Fatal("persisted a one-time host identity approval")
 	}
 }

@@ -1,8 +1,24 @@
 # JumpVNC Viewer 桌面客户端
 
-JumpVNC Viewer 是 JumpVNC 的桌面客户端，实现 [SVNC 接入协议](../docs/protocol.md)，同时支持普通 VNC。JumpVNC 是产品名，SVNC 是协议名，连接表单中的 SVNC / VNC 表示不同接入方式。构建产物为 `JumpVNC.app`，已有配置目录、应用标识、钥匙串标识和 `.svnc` 连接文件继续沿用，改名后仍可读取原有连接与凭据。
+JumpVNC Viewer 是 JumpVNC 的桌面客户端，支持 macOS、Windows 和 Linux，实现 [SVNC 接入协议](../docs/protocol.md)，同时支持普通 VNC。JumpVNC 是产品名，SVNC 是协议名，连接表单中的 SVNC / VNC 表示不同接入方式。已有配置目录、应用标识、钥匙串标识和 `.svnc` 连接文件继续沿用，改名后仍可读取原有连接与凭据。
 
-macOS 客户端使用 MyGo 窗口和 noVNC 画布。启动后先进入连接管理页；每个连接在独立桌面窗口中打开。Go 连接 SSH Agent，随后在同一连接中打开 `vnc` subsystem，并尝试打开 SFTP 会话；SFTP 被禁用或不可用时仍可使用桌面。应用仅给内置的 VNC 画布建立临时回环 WebSocket。文件管理默认隐藏，点击标题栏的“文件管理”后展开远程文件；服务端默认以运行账户 HOME 为根目录。
+客户端使用 MyGo 窗口和 noVNC 画布。启动后先进入连接管理页；每个连接在独立桌面窗口中打开。Go 建立 SSH 连接，随后在同一连接中打开 `vnc` subsystem，并尝试打开 SFTP 会话；SFTP 被禁用或不可用时仍可使用桌面。应用仅给内置的 VNC 画布建立临时回环 WebSocket。文件管理默认隐藏，点击标题栏的“文件管理”后展开远程文件；服务端默认以运行账户 HOME 为根目录。
+
+## 安装
+
+从 [GitHub Releases](https://github.com/jumpserver/jumpvnc/releases/latest) 下载对应平台的 Viewer 包。SSH、跳板机转发和 SFTP 均由 Go 实现，客户端不依赖本机 `ssh` 命令。
+
+| 平台 | 安装方式 |
+| --- | --- |
+| macOS Apple Silicon / Intel | 解压 `jumpvnc-viewer-macos-universal.zip`，打开 `JumpVNC.app`。 |
+| Windows amd64 | 运行 `jumpvnc-viewer-windows-amd64-setup.exe`，按当前用户安装并注册 `.svnc` 文件关联；或解压同平台 `.zip` 便携包，打开 `JumpVNC.exe`。需要 [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)。 |
+| Linux amd64 / arm64 | 解压 `jumpvnc-viewer-linux-<架构>.tar.gz`，以普通用户运行其中的 `sh install.sh`，安装到 `~/.local` 并注册应用菜单和 `.svnc` 文件关联；也可使用包内的 `.deb` 或 `.rpm`。 |
+
+Linux 使用系统 GTK 3 和 WebKitGTK。在 Debian / Ubuntu 上可用 `sudo apt-get install libgtk-3-0 libwebkit2gtk-4.1-0`（使用 t64 的发行版将 GTK 包名替换为 `libgtk-3-0t64`）；Fedora 使用 `sudo dnf install gtk3 webkit2gtk4.1`。`.deb` / `.rpm` 包声明这些运行依赖，由包管理器安装。用户安装方式可用 `sh install.sh --uninstall` 卸载。
+
+密码保存目前仅支持 macOS 登录钥匙串。Windows / Linux 连接时输入密码，并取消“保存密码”；连接配置和私钥路径仍可保存。Windows 可直接指定未加密私钥；现有 SSH agent 支持使用 `SSH_AUTH_SOCK` 的 Unix socket，不支持 Windows OpenSSH agent 命名管道。
+
+跳板机填写 `主机别名` 或 `[用户名@]主机[:端口]`，多级跳转以逗号分隔。客户端读取 `~/.ssh/config` 的 `Host`、`HostName`、`User`、`Port`、首个 `IdentityFile`、`UserKnownHostsFile`（单一路径）、`HostKeyAlias` 和 `ProxyJump`，支持配置中的 `Include`；不执行 `ProxyCommand`，不支持 `Match` 条件。首次连接分别确认跳板机与目标服务器的指纹，已保存的主机密钥不一致时拒绝连接。
 
 ## 构建
 
@@ -17,6 +33,15 @@ go tool mygo build -skip-dmg
 应用图标源文件为 `resources/icon.png`，由 MyGo 构建为 macOS `.icns` 并写入应用包，供 Finder 和 Dock 显示。
 
 在 Apple Silicon Mac 上，打开 `client/build/darwin-arm64/JumpVNC.app`。也可用 `go tool mygo build -platform darwin/universal -skip-dmg` 构建通用版本。
+
+Windows 和 Linux 构建：
+
+```bash
+go tool mygo build -platform windows/amd64
+go tool mygo build -platform linux/amd64,linux/arm64
+```
+
+Windows 产物位于 `build/windows-amd64/`，包括 `JumpVNC.exe` 和 NSIS 安装程序；Windows 构建机缺少 NSIS 时 MyGo 自动下载。跨平台只检查可执行文件可加 `-skip-installer`。Linux 产物位于 `build/linux-<架构>/`，包括应用归档、`install.sh`、`.deb`、`.rpm` 和 `PKGBUILD`。CI 在对应平台构建并打包源码、许可和 SHA-256 校验文件，Linux 还检查应用能否在 Xvfb 中打开窗口。
 
 ## 连接管理
 

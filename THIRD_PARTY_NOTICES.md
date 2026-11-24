@@ -15,6 +15,7 @@ The project uses these third-party components:
 | libjpeg-turbo | Its upstream `LICENSE.md` (IJG, BSD and zlib terms for the respective files). |
 | zlib | zlib license. |
 | MyGo | MIT. |
+| ssh_config | MIT; parses SSH host aliases and jump-host configuration without executing OpenSSH. |
 | Go dependencies | Their upstream license and copyright notices are included in the vendored corresponding sources shipped in each package. |
 | Linux system libraries | X11 and optional FFmpeg components retain the licenses supplied by the target distribution. |
 | Microsoft Visual C++ Redistributable | Microsoft software license terms; bundled unmodified as a Windows installation prerequisite. |
@@ -22,4 +23,4 @@ The project uses these third-party components:
 Release packages include matching JumpVNC source and build scripts under
 `sources/`. Windows packages also include the pinned desktop dependency sources
 and their license texts under `sources/` and `licenses/`. The license text for
-noVNC is included in the macOS application's resources.
+noVNC is included in the Viewer application's resources on all platforms.

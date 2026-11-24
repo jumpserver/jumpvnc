@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "node --test *.test.js",
-    "build": "esbuild app.js manager.js --bundle --format=esm --outdir=../dist && cp index.html viewer.html style.css manager.css ../dist/"
+    "build": "node build.mjs"
   },
   "dependencies": {
     "@novnc/novnc": "1.7.0"

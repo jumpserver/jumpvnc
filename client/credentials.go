@@ -135,11 +135,11 @@ func (p Profile) hostKeyCallback(keyAddress, address string) ssh.HostKeyCallback
 			return statErr
 		}
 		fingerprint := ssh.FingerprintSHA256(key)
-		if p.TrustHostKey == "" {
-			label := address
-			if p.Jump != "" {
-				label = p.Jump + " → " + address
-			}
+		label := address
+		if p.Jump != "" {
+			label = p.Jump + " → " + address
+		}
+		if p.TrustHostKey == "" || (p.TrustHost != "" && p.TrustHost != label) {
 			return &HostKeyChallenge{Host: label, Algorithm: key.Type(), Fingerprint: fingerprint}
 		}
 		if p.TrustHostKey != fingerprint {

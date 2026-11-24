@@ -18,7 +18,7 @@ func TestDirectVNCLifecycle(t *testing.T) {
 			name = "attached"
 		}
 		t.Run(name, func(t *testing.T) {
-			t.Setenv("HOME", t.TempDir())
+			setTestHome(t, t.TempDir())
 			t.Setenv("SSH_AUTH_SOCK", "")
 			listener, err := net.Listen("tcp4", "127.0.0.1:0")
 			if err != nil {

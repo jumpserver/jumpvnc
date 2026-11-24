@@ -4,7 +4,7 @@
 
 JumpVNC 是 JumpServer 团队开发的远程桌面工具：VNC 提供桌面操作，SSH 提供身份认证、加密与连接复用，SFTP 提供文件上传下载。在同一个客户端中即可操作远程桌面、同步文本和传输文件。
 
-目前提供 macOS 客户端，以及 Windows、Linux 服务端。JumpVNC 是产品名，SVNC 是接入协议名，可独立使用，无需部署 JumpServer。
+提供 macOS、Windows、Linux 客户端，以及 Windows、Linux 服务端。JumpVNC 是产品名，SVNC 是接入协议名，可独立使用，无需部署 JumpServer。
 
 **连接管理**
 
@@ -16,7 +16,7 @@ JumpVNC 是 JumpServer 团队开发的远程桌面工具：VNC 提供桌面操�
 
 ## 应用场景
 
-- **远程办公与运维**：从 Mac 访问 Windows 或 Linux 桌面，操作业务软件、排查问题，并在本机与远程机器之间复制文本、上传和下载文件。
+- **远程办公与运维**：从 macOS、Windows 或 Linux 访问远程桌面，操作业务软件、排查问题，并在本机与远程机器之间复制文本、上传和下载文件。
 - **给 VNC 补上文件传输**：远程桌面操作时，直接将本机文件上传到远端，或将远端文件下载到本机，无需再单独打开文件传输工具。
 - **简化网络接入**：桌面和文件共用一个 TCP 端口，适合希望减少防火墙开放端口、使用 SSH 公钥管理访问的环境。
 - **无显示器的 Linux 桌面**：配合 Xvfb 提供远程图形环境，运行开发工具或图形化管理程序。见 [无显示器部署说明](deployments/linux/README.md)。
@@ -41,6 +41,8 @@ Linux 当前支持 X11，Windows 共享控制台桌面；多个连接访问同�
 | 用途 | 平台 | 下载产物 |
 | --- | --- | --- |
 | 客户端 | macOS（Apple Silicon / Intel） | `jumpvnc-viewer-macos-universal` |
+| 客户端 | Windows（amd64） | `jumpvnc-viewer-windows-amd64-setup.exe` / `jumpvnc-viewer-windows-amd64.zip` |
+| 客户端 | Linux（amd64 / arm64） | `jumpvnc-viewer-linux-amd64.tar.gz` / `jumpvnc-viewer-linux-arm64.tar.gz` |
 | 服务端 | Linux（amd64 / arm64） | `jumpvnc-server-linux-amd64` / `jumpvnc-server-linux-arm64` |
 | 服务端 | Windows（amd64） | `jumpvnc-server-windows-amd64-setup.exe` |
 
@@ -74,10 +76,10 @@ bash install.sh
 
 ### 3. 连接桌面与传输文件
 
-1. 在 Mac 上解压客户端，打开 `JumpVNC.app`，添加连接。
-2. 协议选择 **SVNC**，填写服务器地址、端口 `5922` 和用户名 `vncuser`。连接私钥可从 Windows 管理窗口复制，或从 Linux 安装输出指示的文件获取，保存到 Mac 后在客户端“SSH 私钥文件”中填写路径。使用已有密钥时也可留空，客户端自动使用本机身份；加密私钥需先加入 SSH agent。
+1. macOS 解压后打开 `JumpVNC.app`；Windows 运行 Viewer 安装程序，或解压便携包打开 `JumpVNC.exe`（需要 Microsoft Edge WebView2 Runtime）；Linux 解压后以普通用户运行包内的 `sh install.sh`，或使用包内的 `.deb` / `.rpm` 安装，再从应用菜单打开 JumpVNC。Linux 需要 GTK 3 和 WebKitGTK，详见 [客户端安装说明](client/README.md#安装)。
+2. 协议选择 **SVNC**，填写服务器地址、端口 `5922` 和用户名 `vncuser`。连接私钥可从 Windows 管理窗口复制，或从 Linux 安装输出指示的文件获取，保存为本机文件，再在客户端“SSH 私钥文件”中填写该文件路径。使用已有密钥时也可留空，客户端自动使用本机身份；加密私钥需先加入 SSH agent。SSH 和跳板机连接均由 Go 实现，无需安装本机 `ssh` 命令。
 3. 首次连接时核对管理窗口显示的主机指纹，再输入 VNC 密码。Windows 的密码可在管理窗口显示，或通过“复制连接信息”获取；Linux 的密码和主机指纹会在安装结束时显示。
-4. 进入桌面后，点击“文件管理”浏览远程目录，从 Finder 拖入文件上传，或选中文件下载到本机。文件管理需服务端已启用 SFTP。
+4. 进入桌面后，点击“文件管理”浏览远程目录，从本机文件管理器拖入文件上传，或选中文件下载到本机。文件管理需服务端已启用 SFTP。
 5. 按需在“设置”中切换清晰或视频模式。当前窗口激活时，文本剪贴板自动双向同步。
 
 更多操作见 [Viewer 使用说明](client/README.md)。已有 VNC Viewer 的 SSH 隧道接入方式见 [兼容接入](docs/protocol.md#71-ssh-本地转发)。
