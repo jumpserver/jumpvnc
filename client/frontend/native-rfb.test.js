@@ -2,6 +2,57 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { nativeRFB } from './native-rfb.js';
 
+function cursorFixture(image, scale = 0.5) {
+  const rendered = [];
+  class Base {
+    _shouldShowDotCursor() { return this.dot || false; }
+    _refreshCursor() { rendered.push(this.dot ? 'dot' : this._cursorImage); }
+    _updateScale() { this._display.scale = this.nextScale; }
+  }
+  const client = new (nativeRFB(Base))();
+  Object.assign(client, { _cursorImage: image, _display: { scale } });
+  return { client, rendered };
+}
+
+test('remote cursor pixels, transparency and hotspot follow desktop scale', () => {
+  const rgbaPixels = new Uint8Array(4 * 4 * 4);
+  for (let i = 0; i < 16; i++) rgbaPixels.set([i, 10, 20, i === 5 ? 0 : 255], i * 4);
+  const image = { rgbaPixels, w: 4, h: 4, hotx: 3, hoty: 2 };
+  const { client, rendered } = cursorFixture(image);
+  client._refreshCursor();
+  assert.deepEqual(rendered[0], { w: 2, h: 2, hotx: 1, hoty: 1,
+    rgbaPixels: new Uint8Array([5, 10, 20, 0, 7, 10, 20, 255,
+      13, 10, 20, 255, 15, 10, 20, 255]) });
+  assert.equal(client._cursorImage, image);
+  client._refreshCursor();
+  assert.equal(rendered[1], rendered[0]);
+  client.nextScale = 1;
+  client._updateScale();
+  assert.equal(rendered.at(-1), image);
+  client.nextScale = 0.25;
+  client._updateScale();
+  assert.equal(rendered.at(-1).w, 1);
+  assert.equal(rendered.at(-1).hotx, 0);
+  // Always resize the original; shrinking the already scaled cursor loses detail.
+  client.nextScale = 0.5;
+  client._updateScale();
+  assert.deepEqual(rendered.at(-1), rendered[0]);
+});
+
+test('cursor changes, hidden shapes and the local dot retain base behavior', () => {
+  const image = { rgbaPixels: new Uint8Array([1, 2, 3, 0]), w: 1, h: 1, hotx: 0, hoty: 0 };
+  const { client, rendered } = cursorFixture(image);
+  client._refreshCursor();
+  assert.deepEqual([...rendered.at(-1).rgbaPixels], [1, 2, 3, 0]);
+  client._cursorImage = { rgbaPixels: new Uint8Array(0), w: 0, h: 0, hotx: 0, hoty: 0 };
+  client._refreshCursor();
+  assert.equal(rendered.at(-1), client._cursorImage);
+  client.dot = true;
+  client._refreshCursor();
+  assert.equal(rendered.at(-1), 'dot');
+  assert.equal(client._cursorImage.w, 0);
+});
+
 function fixture({ notify = false, provide = true, text = true, viewOnly = false, connected = true } = {}) {
   const sent = [];
   class Base {

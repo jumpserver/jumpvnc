@@ -93,11 +93,11 @@ function selectQuality() {
   const profile = qualityProfiles[name];
   if (client) applyQuality(client, name);
   $('quality-settings').textContent = profile.video
-    ? (supportsWebCodecsH264Decode ? '优先 H.264 · 目标 6 Mbps / 30 FPS；不支持时使用流畅画质。实际编码见详细指标。'
-      : '当前窗口不支持 H.264 解码，使用流畅画质。')
-    : `请求画质 ${profile.quality}/9 · 压缩 ${profile.compression}/9`;
+    ? (supportsWebCodecsH264Decode ? '适合动态画面和连续滚动，不支持视频编码时自动使用兼容编码。'
+      : '当前窗口不支持视频解码，已使用兼容编码。')
+    : '适合文字办公，保留小字和细线的清晰度。';
   $('header-quality').textContent = profile.label;
-  $('header-quality').title = `画质请求：${profile.label}（Q${profile.quality}）`;
+  $('header-quality').title = `画质请求：${profile.label}`;
   try { localStorage.setItem('sshvnc.quality', name); } catch { /* Optional preference storage. */ }
 }
 
@@ -681,7 +681,7 @@ async function init() {
   try {
     const saved = localStorage.getItem('sshvnc.quality');
     if (Object.hasOwn(qualityProfiles, saved)) $('quality-profile').value = saved;
-  } catch { /* Use balanced if preference storage is unavailable. */ }
+  } catch { /* Use video if preference storage is unavailable. */ }
   selectQuality();
   try {
     const server = await call('Defaults');

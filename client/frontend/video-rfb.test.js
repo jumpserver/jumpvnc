@@ -43,7 +43,7 @@ test('switching modes refreshes every pixel; repeated selection preserves encode
   assert.equal(sent.length, 2);
   applyQuality(client, 'video');
   assert.equal(sent.length, 2);
-  applyQuality(client, 'balanced');
+  applyQuality(client, 'sharp');
   assert.equal(sent.length, 4);
   assert(!sent.at(-2).list.includes(50));
   assert.deepEqual(sent.at(-1).refresh.slice(1), [false, 0, 0, 2560, 1440]);
@@ -56,4 +56,17 @@ test('selecting video before connecting affects the initial encoding negotiation
   assert.equal(sent.length, 0);
   client._sendEncodings();
   assert(sent[0].list.includes(50));
+});
+
+test('removed or missing quality preferences use video with compatible encodings available', () => {
+  for (const name of ['smooth', 'balanced', 'unknown', undefined]) {
+    for (const support of [true, false]) {
+      const { client, sent } = fixture(support);
+      applyQuality(client, name);
+      const list = sent.at(-2).list;
+      assert.equal(list.includes(encodings.encodingH264), support);
+      assert(list.includes(encodings.encodingTight));
+      assert(list.includes(encodings.encodingRaw));
+    }
+  }
 });

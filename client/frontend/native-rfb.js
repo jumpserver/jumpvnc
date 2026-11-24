@@ -1,3 +1,23 @@
+// RFB cursor pixels use framebuffer coordinates, while browser cursors use CSS
+// pixels. Keep both the shape and its hotspot aligned with the scaled desktop.
+function scaleCursor(image, scale) {
+  if (!image.w || !image.h || !Number.isFinite(scale) || scale <= 0 || scale === 1) return image;
+  const w = Math.max(1, Math.round(image.w * scale));
+  const h = Math.max(1, Math.round(image.h * scale));
+  const rgbaPixels = new Uint8Array(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    const sy = Math.min(image.h - 1, Math.floor((y + 0.5) * image.h / h));
+    for (let x = 0; x < w; x++) {
+      const sx = Math.min(image.w - 1, Math.floor((x + 0.5) * image.w / w));
+      const source = (sy * image.w + sx) * 4;
+      rgbaPixels.set(image.rgbaPixels.subarray(source, source + 4), (y * w + x) * 4);
+    }
+  }
+  return { rgbaPixels, w, h,
+    hotx: Math.min(w - 1, Math.round(image.hotx * w / image.w)),
+    hoty: Math.min(h - 1, Math.round(image.hoty * h / image.h)) };
+}
+
 // Compatibility adapter for the pinned noVNC 1.7.0 and native LibVNCServer backends.
 export function nativeRFB(BaseRFB) {
   return class NativeRFB extends BaseRFB {
@@ -32,6 +52,24 @@ export function nativeRFB(BaseRFB) {
       };
       this._canvas?.addEventListener('keydown', modifiers, true);
       this._canvas?.addEventListener('keyup', modifiers, true);
+    }
+
+    _refreshCursor() {
+      const original = this._cursorImage;
+      // Keep noVNC's local dot fallback at its normal CSS size.
+      if (!original || this._shouldShowDotCursor()) return super._refreshCursor();
+      const scale = this._display?.scale ?? 1;
+      if (this._nativeCursor?.image !== original || this._nativeCursor.scale !== scale) {
+        this._nativeCursor = { image: original, scale, scaled: scaleCursor(original, scale) };
+      }
+      this._cursorImage = this._nativeCursor.scaled;
+      try { return super._refreshCursor(); }
+      finally { this._cursorImage = original; }
+    }
+
+    _updateScale() {
+      super._updateScale();
+      this._refreshCursor();
     }
 
     _handleKeyEvent(keysym, code, down, ...locks) {
