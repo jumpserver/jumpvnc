@@ -25,7 +25,7 @@ sha256sum "$state/config.yaml" "$state/ssh_host_ed25519_key" "$state/client_ed25
 runuser -u "$account" -- bash "$package/install.sh" --no-start > /tmp/jumpvnc-upgrade-output
 sha256sum -c /tmp/jumpvnc-install-before.sha256
 # Simulate the old state directory and verify migration keeps all credentials.
-mkdir -p /var/lib/sshvnc
+install -d -m 755 /var/lib/sshvnc
 mv "$state" "/var/lib/sshvnc/$account"
 runuser -u "$account" -- bash "$package/install.sh" --no-start > /tmp/jumpvnc-migrate-output
 sha256sum -c /tmp/jumpvnc-install-before.sha256

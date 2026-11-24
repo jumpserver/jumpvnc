@@ -80,11 +80,13 @@ sudo -v
 # A downloaded package must not become the running program: its directory can
 # be removed after installation. Credentials remain outside the SFTP HOME root.
 sudo install -d -m 755 "$prefix/bin" "$prefix/backends/linux" /var/lib/jumpvnc
-new_state=false
-[[ -d $state ]] || new_state=true
 sudo install -d -m 700 -o "$account" -g "$(id -gn)" "$state"
 legacy_state="/var/lib/sshvnc/$account"
-if $new_state && [[ -d $legacy_state && ! -L $legacy_state ]]; then
+if [[ ! -f $state/config.yaml ]] && sudo test -e "$legacy_state"; then
+    if [[ ! -d $legacy_state || -L $legacy_state || ! -r $legacy_state || ! -x $legacy_state ]]; then
+        echo '发现旧配置，但当前用户无法读取；请先检查旧目录的访问权限，安装不会重新生成凭据。' >&2
+        exit 1
+    fi
     cp -a -- "$legacy_state/." "$state/"
 fi
 if systemctl --user show-environment >/dev/null 2>&1; then
