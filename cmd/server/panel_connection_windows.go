@@ -194,8 +194,11 @@ func setWindowsClipboard(owner uintptr, text string) error {
 	if pointer == 0 {
 		return err
 	}
-	copy(unsafe.Slice((*uint16)(unsafe.Pointer(pointer)), len(content)), content)
+	writeErr := windows.WriteProcessMemory(windows.CurrentProcess(), pointer, (*byte)(unsafe.Pointer(&content[0])), uintptr(len(content)*2), nil)
 	unlock.Call(handle)
+	if writeErr != nil {
+		return writeErr
+	}
 	if ok, _, err := user32.NewProc("OpenClipboard").Call(owner); ok == 0 {
 		return err
 	}

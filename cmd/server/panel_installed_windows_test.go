@@ -109,7 +109,16 @@ func readInstalledClipboard(t *testing.T) string {
 		t.Fatal(err)
 	}
 	defer kernel32.NewProc("GlobalUnlock").Call(handle)
-	return windows.UTF16PtrToString((*uint16)(unsafe.Pointer(pointer)))
+	size, _, err := kernel32.NewProc("GlobalSize").Call(handle)
+	if size < 2 || size > 1<<20 || size%2 != 0 {
+		t.Fatalf("invalid clipboard buffer size: %d (%v)", size, err)
+	}
+	content := make([]uint16, size/2)
+	defer clear(content)
+	if err := windows.ReadProcessMemory(windows.CurrentProcess(), pointer, (*byte)(unsafe.Pointer(&content[0])), size, nil); err != nil {
+		t.Fatal(err)
+	}
+	return windows.UTF16ToString(content)
 }
 
 func writeInstalledPanelScreenshot(t *testing.T, hwnd uintptr, name string) {
@@ -142,7 +151,10 @@ func writeInstalledPanelScreenshot(t *testing.T, hwnd uintptr, name string) {
 	if ok, _, err := user32.NewProc("PrintWindow").Call(hwnd, memory, 2); ok == 0 {
 		t.Fatal(err)
 	}
-	data := unsafe.Slice((*byte)(unsafe.Pointer(pixels)), width*height*4)
+	data := make([]byte, width*height*4)
+	if err := windows.ReadProcessMemory(windows.CurrentProcess(), pixels, &data[0], uintptr(len(data)), nil); err != nil {
+		t.Fatal(err)
+	}
 	picture := image.NewNRGBA(image.Rect(0, 0, width, height))
 	for offset := 0; offset < len(data); offset += 4 {
 		picture.Pix[offset], picture.Pix[offset+1], picture.Pix[offset+2], picture.Pix[offset+3] = data[offset+2], data[offset+1], data[offset], 255
