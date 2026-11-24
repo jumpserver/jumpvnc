@@ -19,6 +19,7 @@
 #include <wrl/client.h>
 using Microsoft::WRL::ComPtr;
 #include "runtime.h"
+#include "h264_bridge.h"
 struct ClientInput {
     std::set<WORD> keys;
     int buttons = 0;
@@ -264,6 +265,7 @@ static void releaseKeys(rfbClientPtr cl) {
     state.buttons = 0;
 }
 static void disconnected(rfbClientPtr cl) {
+    svncH264Reset(cl);
     releaseKeys(cl);
     delete static_cast<ClientInput *>(cl->clientData);
     cl->clientData = nullptr;

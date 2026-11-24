@@ -1,13 +1,19 @@
 import { syncTransport, setProfile, profileFromForm, desktopEndpoint } from './transport.js';
 import { missingCredentials, promptCredentials, cancelCredentials, profileToSave } from './auth.js';
 import RFB from '@novnc/novnc';
+import { encodings } from './node_modules/@novnc/novnc/core/encodings.js';
+import { supportsWebCodecsH264Decode } from './node_modules/@novnc/novnc/core/util/browser.js';
+import { H264Parser } from './node_modules/@novnc/novnc/core/decoders/h264.js';
+import { installH264AccessUnits } from './h264-access-units.js';
 import { applyQuality, NetworkWindow, qualityProfiles } from './performance.js';
 import { measureRFB } from './rfb-performance.js';
 import { nativeRFB } from './native-rfb.js';
+import { videoRFB } from './video-rfb.js';
 import { fileLocationPath, fileLocationNote } from './file-location.js';
 import { clipboardSync } from './clipboard.js';
 
-const MeasuredRFB = measureRFB(nativeRFB(RFB));
+installH264AccessUnits(H264Parser);
+const MeasuredRFB = measureRFB(nativeRFB(videoRFB(RFB, encodings, supportsWebCodecsH264Decode)));
 
 const $ = (id) => document.getElementById(id);
 const call = (method, ...args) => window.mygo.call('Viewer.' + method, ...args);
@@ -86,7 +92,10 @@ function selectQuality() {
   const name = $('quality-profile').value;
   const profile = qualityProfiles[name];
   if (client) applyQuality(client, name);
-  $('quality-settings').textContent = `请求画质 ${profile.quality}/9 · 压缩 ${profile.compression}/9`;
+  $('quality-settings').textContent = profile.video
+    ? (supportsWebCodecsH264Decode ? '优先 H.264 · 目标 6 Mbps / 30 FPS；不支持时使用流畅画质。实际编码见详细指标。'
+      : '当前窗口不支持 H.264 解码，使用流畅画质。')
+    : `请求画质 ${profile.quality}/9 · 压缩 ${profile.compression}/9`;
   $('header-quality').textContent = profile.label;
   $('header-quality').title = `画质请求：${profile.label}（Q${profile.quality}）`;
   try { localStorage.setItem('sshvnc.quality', name); } catch { /* Optional preference storage. */ }

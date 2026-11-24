@@ -2,6 +2,10 @@
 
 `svnc-desktop.exe` 使用 LibVNCServer 0.9.15、libjpeg-turbo 和 DXGI Desktop Duplication，共享当前登录用户的主屏。Go Agent 管理后端生命周期，并提供 SSH 转发、SFTP、授权和审计。文件传输只使用 SFTP；后端禁用 UltraVNC 文件传输，不编译 TightVNC 文件扩展。
 
+支持由客户端显式选择的 H.264 试用模式：RFB 编码 50（与 LibVNCServer 头文件中的 `rfbEncodingH264` 不是同一种封装），通过原 SSH 桌面通道传输。当前使用 Windows 内置的同步 Media Foundation 软件编码器、NV12 / 4:2:0、Baseline、无 B 帧、低延迟模式，平均码率目标 6 Mbps、最高 30 FPS；尚未提供硬件编码、自适应码率或 UDP 媒体通道。关键帧可以短时超过平均码率。只在画面变化或客户端请求刷新时编码，最多两个视频客户端，支持正偶数尺寸且不超过 4096×2160；不满足条件时保留原 RFB 编码协商。运行中编码失败时先发送一个 Raw 矩形以保持已宣布的矩形数量一致，随后回退普通编码。
+
+`h264.cmake` 为固定版本的 LibVNCServer 在构建目录生成编码协商/发送的覆盖源文件，不修改依赖检出；原源码钩子不匹配时构建失败。每个视频客户端独立维护编码上下文，重连、重新协商或尺寸改变时重建，并在首帧携带解码上下文重置标志。完整帧按顺序编码，不排队保存历史画面。`h264.ready`、`h264.unavailable`、`h264.failed`、`h264.stats` 日志可用于排查编码器、码率和编码耗时。
+
 ## 构建
 
 在 macOS/Linux 运行 `./prepare-sources.sh` 准备固定提交的依赖源码；Windows 也可以用 Git 按脚本中的提交准备 `libvncserver`、`jpeg`、`zlib` 三个目录。依赖与构建产物均不提交。
@@ -126,6 +130,29 @@ go test ./tests/integration -run TestLibVNCBackend -v -count=1
 ```
 
 该验收验证认证、无认证请求拒绝、禁用 RFB 文件传输、不完整握手回收、分包协商、Raw 画面、光标与 ExtendedClipboard 能力。真实键鼠、中文剪贴板双向同步及只读策略需要在独立临时测试窗口验收，避免向其他应用发送测试输入。LibVNCServer 0.9.15 的剪贴板广播 API 不过滤未认证客户端，本适配层在认证完成前延迟广播，并在 10 秒后回收未完成的握手。
+
+## 2026-11-24 H.264 试用验收
+
+- Windows 后端交叉构建、macOS Universal 客户端构建通过。
+- g15 软件编码合成验收：2560×1440 桌面中一个 960×540 区域持续变化，120 帧全部输出，媒体平均约 6.09 Mbps。FFmpeg 完整解码 120 帧通过；客户端访问单元解析也得到 120 帧（含两个关键帧）。此数据不是游戏性能对比。
+- 真实回环 SSH 隧道验收通过：编码 50 首帧的 SPS/PPS/IDR、后续帧、两轮 H.264 → Raw → H.264 切换；原有认证拒绝、文件扩展拒绝、未完成握手回收、Raw/光标/剪贴板能力验收通过。
+- Mac MyGo / noVNC 真实显示了 g15 的游戏窗口：当时均衡档接收约 27–34 Mbps，视频档约 5–6 Mbps、每秒约 24 次画面更新，采样时绘制队列和未解析数据均为 0。动态画面没有严格重放，这只是同一会话的观察，不能视为通用性能保证；未测量输入到显示的延迟。
+- g15 只替换已安装的 Windows 后端，原文件和 `restore.ps1` 保存在 `C:\Program Files\SuperVNC\backups\before-h264-20261124-123253`。SSH 入口和凭据沿用原部署。
+
+合成编码测试不采集桌面：
+
+```powershell
+cmake --build desktop/windows/build --config Release --target h264-smoke
+.\desktop\windows\build\Release\h264-smoke.exe "$env:TEMP\svnc-h264-smoke.h264"
+```
+
+真实协议验收显式指定临时后端的 SSH 回环隧道：
+
+```bash
+SVNC_RFB_H264_ADDRESS=127.0.0.1:15906 \
+SVNC_RFB_PASSWORD_FILE=/private/path/vnc-password.txt \
+go test ./tests/integration -run TestLibVNCH264Backend -v -count=1
+```
 
 ## 2026-11-19 g15 接入验收
 

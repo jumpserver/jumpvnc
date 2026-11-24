@@ -2,12 +2,14 @@ export const qualityProfiles = Object.freeze({
   smooth: { label: '流畅', quality: 3, compression: 1 },
   balanced: { label: '均衡', quality: 6, compression: 2 },
   sharp: { label: '清晰', quality: 8, compression: 2 },
+  video: { label: '视频（试用）', quality: 3, compression: 1, video: true },
 });
 
 export function applyQuality(rfb, name) {
   const profile = qualityProfiles[name] || qualityProfiles.balanced;
   rfb.qualityLevel = profile.quality;
   rfb.compressionLevel = profile.compression;
+  rfb.preferVideo = Boolean(profile.video);
   return profile;
 }
 
