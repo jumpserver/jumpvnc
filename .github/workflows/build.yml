@@ -35,7 +35,7 @@ jobs:
             libjpeg62-turbo-dev zlib1g-dev libavcodec-dev libavutil-dev libswscale-dev ffmpeg \
             libx11-dev libxtst-dev libxfixes-dev \
             xvfb xterm xdotool xauth xclip tigervnc-tools tigervnc-viewer \
-            tigervnc-scraping-server openssh-client iproute2 xfonts-base sudo
+            tigervnc-scraping-server openssh-client iproute2 xfonts-base sudo systemd
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
