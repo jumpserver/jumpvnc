@@ -6,6 +6,14 @@ JumpVNC 是 JumpServer 团队开发的远程桌面工具：VNC 提供桌面操�
 
 目前提供 macOS 客户端，以及 Windows、Linux 服务端。JumpVNC 是产品名，SVNC 是接入协议名，可独立使用，无需部署 JumpServer。
 
+**连接管理**
+
+![JumpVNC Viewer 连接管理](docs/images/connection-manager.png)
+
+**远程桌面**
+
+![通过 JumpVNC Viewer 访问 Windows 桌面](docs/images/remote-desktop.png)
+
 ## 应用场景
 
 - **远程办公与运维**：从 Mac 访问 Windows 或 Linux 桌面，操作业务软件、排查问题，并在本机与远程机器之间复制文本、上传和下载文件。
