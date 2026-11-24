@@ -11,7 +11,7 @@ inline void recoverCursorPixels(unsigned char* black, const unsigned char* white
         const int a = std::clamp(255 - (difference + 1) / 3, 0, 255);
         alpha[i] = (unsigned char)a;
         for (int c = 0; c < 3; ++c)
-            black[i * 4 + c] = a ? (unsigned char)std::min(255, (black[i * 4 + c] * 255 + a / 2) / a) : 0;
+            black[i * 4 + c] = a ? (unsigned char)(std::min)(255, (black[i * 4 + c] * 255 + a / 2) / a) : 0;
         mask[i] = a >= 128 ? 'x' : ' ';
     }
 }
