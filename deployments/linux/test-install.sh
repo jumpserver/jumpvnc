@@ -27,6 +27,14 @@ sha256sum -c /tmp/jumpvnc-install-before.sha256
 # Simulate the old state directory and verify migration keeps all credentials.
 install -d -m 755 /var/lib/sshvnc
 mv "$state" "/var/lib/sshvnc/$account"
+# An unreadable legacy directory must abort, never generate a new identity.
+chmod 700 /var/lib/sshvnc
+if runuser -u "$account" -- bash "$package/install.sh" --no-start > /tmp/jumpvnc-blocked-migrate-output 2>&1; then
+    echo 'Installer ignored an unreadable legacy configuration' >&2
+    exit 1
+fi
+test ! -f "$state/ssh_host_ed25519_key"
+chmod 755 /var/lib/sshvnc
 runuser -u "$account" -- bash "$package/install.sh" --no-start > /tmp/jumpvnc-migrate-output
 sha256sum -c /tmp/jumpvnc-install-before.sha256
 runuser -u "$account" -- bash /opt/jumpvnc/install.sh --info > /tmp/jumpvnc-info-output
