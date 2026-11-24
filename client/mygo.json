@@ -1,8 +1,8 @@
 {
   "name": "JumpVNC",
-  "slug": "sshvnc-desktop",
+  "slug": "jumpvnc-viewer",
   "identifier": "com.sshvnc.desktop",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "icon": "resources/icon.png",
   "frontendDist": "dist",
   "buildCommand": "npm --prefix frontend run build",

@@ -10,8 +10,8 @@ import (
 
 	"golang.org/x/sys/windows/svc"
 
-	"sshvnc/internal/config"
-	"sshvnc/internal/vnc"
+	"jumpvnc/internal/config"
+	"jumpvnc/internal/vnc"
 )
 
 // Keep the SCM identity so existing Windows service installations can be upgraded.

@@ -18,26 +18,26 @@ sh desktop/linux/prepare-sources.sh
 cmake -S desktop/linux -B /tmp/svnc-linux-build -DCMAKE_BUILD_TYPE=Release
 cmake --build /tmp/svnc-linux-build -j
 sudo cmake --install /tmp/svnc-linux-build --prefix /opt/svnc
-go build -o bin/sshvnc ./cmd/server
+go build -o bin/jumpvnc ./cmd/server
 ```
 
 准备私有配置和凭据（首次部署执行，保留已有 SSH 主机密钥）：
 
 ```sh
 umask 077
-state=/var/lib/sshvnc/$USER
+state=/var/lib/jumpvnc/$USER
 sudo install -d -m 700 -o "$USER" "$state"
 cp configs/linux.example.yaml "$state/config.yaml"
 # 将配置中的 vnc.executable 设置为 /opt/svnc/backends/linux/svnc-desktop。
 ssh-keygen -t ed25519 -N '' -f "$state/ssh_host_ed25519_key"
 cp /path/to/client.pub "$state/authorized_keys"
 printf 'changeMe\n' > "$state/vnc-password.txt"
-./bin/sshvnc -config "$state/config.yaml"
+./bin/jumpvnc -config "$state/config.yaml"
 ```
 
 示例密码必须换成自己的密码。后端密码文件是 1–8 字节可打印 ASCII 明文，可带一个结尾换行；与 TigerVNC 的 `vncpasswd` 文件不同。文件需为普通文件且组/其他用户无权限，后端拒绝符号链接。配置路径相对于 YAML 文件所在目录。SFTP 默认访问运行账户的 HOME，配置、凭据和后端程序须在 HOME 外；旧交换目录中的文件保留在原位置。
 
-以已登录桌面的普通用户运行，继承 `DISPLAY` 和 `XAUTHORITY`。可以沿用 [systemd 用户服务](../../deployments/sshvnc.service)，从桌面终端导入环境后启动。仅监听 `127.0.0.1`，远程客户端仍通过 SSH 隧道接入；文件传输仅走专用 SFTP 目录。LibVNCServer 静态链接；FFmpeg、JPEG/zlib 和 X11 运行库采用动态链接，目标系统需安装与构建环境匹配的版本。Debian 13 对应 `libavcodec61 libavutil59 libswscale8 libjpeg62-turbo zlib1g libx11-6 libxtst6 libxfixes3`。NVENC/VAAPI 另需相应 GPU 驱动及设备访问权限，程序不会修改权限。发布包附带固定版本 LibVNCServer 源码和许可证；离线构建可把该源码解压至 `desktop/linux/libvncserver`，或用 `SVNC_DEPENDENCIES` 指定包含该目录的路径。
+以已登录桌面的普通用户运行，继承 `DISPLAY` 和 `XAUTHORITY`。可以沿用 [systemd 用户服务](../../deployments/jumpvnc.service)，从桌面终端导入环境后启动。仅监听 `127.0.0.1`，远程客户端仍通过 SSH 隧道接入；文件传输仅走专用 SFTP 目录。LibVNCServer 静态链接；FFmpeg、JPEG/zlib 和 X11 运行库采用动态链接，目标系统需安装与构建环境匹配的版本。Debian 13 对应 `libavcodec61 libavutil59 libswscale8 libjpeg62-turbo zlib1g libx11-6 libxtst6 libxfixes3`。NVENC/VAAPI 另需相应 GPU 驱动及设备访问权限，程序不会修改权限。发布包附带固定版本 LibVNCServer 源码和许可证；离线构建可把该源码解压至 `desktop/linux/libvncserver`，或用 `SVNC_DEPENDENCIES` 指定包含该目录的路径。
 
 ## 范围和限制
 
@@ -62,10 +62,10 @@ cmake --build /tmp/svnc-linux-build --target h264-smoke
 /tmp/svnc-linux-build/h264-smoke auto
 go test -c -o /tmp/svnc-rfb.test ./tests/integration
 SVNC_RFB_TEST_BINARY=/tmp/svnc-rfb.test SVNC_TEST_H264=1 \
-  bash tests/integration/libvncserver.sh bin/sshvnc /tmp/svnc-linux-build/svnc-desktop
+  bash tests/integration/libvncserver.sh bin/jumpvnc /tmp/svnc-linux-build/svnc-desktop
 SVNC_RFB_TEST_BINARY=/tmp/svnc-rfb.test SVNC_TEST_H264_ODD_GEOMETRY=1 \
   SVNC_TEST_DESKTOP_GEOMETRY=801x601x24 \
-  bash tests/integration/libvncserver.sh bin/sshvnc /tmp/svnc-linux-build/svnc-desktop
+  bash tests/integration/libvncserver.sh bin/jumpvnc /tmp/svnc-linux-build/svnc-desktop
 ```
 
 该测试使用临时 Xvfb 桌面和真实 TigerVNC Viewer，检查 SSH 白名单、VNC 认证、键鼠、中文文本剪贴板双向传输、SFTP、退出和 SSH 主机密钥持久化。可选编译 `go test -c -o /tmp/svnc-rfb.test ./tests/integration`，设置 `SVNC_RFB_TEST_BINARY=/tmp/svnc-rfb.test` 后运行上述脚本，额外检查错误密码、拒绝 None 认证、禁用 RFB 文件传输、不完整握手回收、Raw 画面、光标及 ExtendedClipboard 协商。

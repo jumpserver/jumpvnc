@@ -19,8 +19,8 @@ import (
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 
-	"sshvnc/internal/config"
-	"sshvnc/internal/sshgateway"
+	"jumpvnc/internal/config"
+	"jumpvnc/internal/sshgateway"
 )
 
 func startGateway(t *testing.T, mode string, options ...func(*config.Config)) (*ssh.Client, string, string) {
@@ -203,30 +203,32 @@ func TestGatewayPolicies(t *testing.T) {
 }
 
 func TestSFTPLocation(t *testing.T) {
-	for _, mode := range []string{"read_write", "disabled"} {
-		t.Run(mode, func(t *testing.T) {
-			client, root, _ := startGateway(t, mode)
-			ok, data, err := client.SendRequest("sftp-location@sshvnc", true, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if mode == "disabled" {
-				if ok || len(data) != 0 {
-					t.Fatal("disclosed a disabled SFTP directory")
+	for _, request := range []string{"sftp-location@jumpvnc", "sftp-location@sshvnc"} {
+		for _, mode := range []string{"read_write", "disabled"} {
+			t.Run(request+"/"+mode, func(t *testing.T) {
+				client, root, _ := startGateway(t, mode)
+				ok, data, err := client.SendRequest(request, true, nil)
+				if err != nil {
+					t.Fatal(err)
 				}
-				return
-			}
-			var location struct {
-				Root string `json:"root"`
-				Home bool   `json:"home"`
-			}
-			if !ok || json.Unmarshal(data, &location) != nil || location.Root != root || location.Home {
-				t.Fatalf("unexpected location: %s", data)
-			}
-			if ok, _, err := client.SendRequest("sftp-location@sshvnc", true, []byte("invalid")); err != nil || ok {
-				t.Fatalf("accepted malformed request: %v", err)
-			}
-		})
+				if mode == "disabled" {
+					if ok || len(data) != 0 {
+						t.Fatal("disclosed a disabled SFTP directory")
+					}
+					return
+				}
+				var location struct {
+					Root string `json:"root"`
+					Home bool   `json:"home"`
+				}
+				if !ok || json.Unmarshal(data, &location) != nil || location.Root != root || location.Home {
+					t.Fatalf("unexpected location: %s", data)
+				}
+				if ok, _, err := client.SendRequest(request, true, []byte("invalid")); err != nil || ok {
+					t.Fatalf("accepted malformed request: %v", err)
+				}
+			})
+		}
 	}
 }
 

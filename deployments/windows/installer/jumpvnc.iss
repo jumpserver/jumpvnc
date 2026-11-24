@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "0.1.0"
+  #define AppVersion "0.1.1"
 #endif
 #ifndef PackageDir
   #define PackageDir "..\..\..\dist\jumpvnc-server-windows-amd64"
@@ -38,7 +38,7 @@ Source: "{#RedistPath}"; DestDir: "{tmp}"; Flags: deleteafterinstall
 Source: "prepare-install.ps1"; Flags: dontcopy
 
 [Run]
-Filename: "{app}\bin\sshvnc.exe"; Parameters: "-manage-service -open-panel"; Description: "Open JumpVNC Server"; Flags: nowait postinstall skipifsilent runascurrentuser
+Filename: "{app}\bin\jumpvnc.exe"; Parameters: "-manage-service -open-panel"; Description: "Open JumpVNC Server"; Flags: nowait postinstall skipifsilent runascurrentuser
 
 [Code]
 function RunPowerShell(const Script, Extra: String): Boolean;

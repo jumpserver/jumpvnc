@@ -8,8 +8,8 @@ import (
 
 	"golang.org/x/sys/windows"
 
-	"sshvnc/internal/config"
-	"sshvnc/internal/vnc"
+	"jumpvnc/internal/config"
+	"jumpvnc/internal/vnc"
 )
 
 func TestWriteSFTPRootPreservesConfigACL(t *testing.T) {

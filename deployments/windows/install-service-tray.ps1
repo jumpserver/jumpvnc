@@ -11,7 +11,7 @@ if(-not $service -or $service.PathName -notmatch '^"([^"]+)"' -or $Matches[1] -n
 }
 $launcher=(Resolve-Path (Join-Path $PSScriptRoot 'run-service-tray.ps1')).Path
 $root=Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'SuperVNC'
-if($Agent -ne (Join-Path $root 'bin\sshvnc.exe') -or $launcher -ne (Join-Path $root 'deployments\windows\run-service-tray.ps1')) {
+if($Agent -ne (Join-Path $root 'bin\jumpvnc.exe') -or $launcher -ne (Join-Path $root 'deployments\windows\run-service-tray.ps1')) {
   throw 'Install the service and tray launcher in the protected JumpVNC installation directory first.'
 }
 # Let logged-in users execute the tray, while configuration, passwords and keys

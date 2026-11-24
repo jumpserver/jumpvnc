@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"sshvnc/internal/config"
+	"jumpvnc/internal/config"
 )
 
 func TestServiceAllowsScopedFilesWithoutEnablingOtherServices(t *testing.T) {

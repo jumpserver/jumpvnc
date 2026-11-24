@@ -21,6 +21,10 @@ const connectionKeyName = "client_ed25519_key"
 // Initialization is additive: upgrades never replace existing identities,
 // passwords, access lists or configuration, including an intentionally empty list.
 func initializeServiceFiles(name, fileRoot string) error {
+	return initializeServiceFilesWithBackend(name, fileRoot, "backends/windows/svnc-desktop.exe")
+}
+
+func initializeServiceFilesWithBackend(name, fileRoot, backend string) error {
 	dir := filepath.Dir(name)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
@@ -50,6 +54,10 @@ func initializeServiceFiles(name, fileRoot string) error {
 	if err != nil {
 		return err
 	}
+	executable, err := yaml.Marshal(backend)
+	if err != nil {
+		return err
+	}
 	settings := fmt.Sprintf(`ssh:
   listen: "0.0.0.0:5922"
   host_key_file: ssh_host_ed25519_key
@@ -62,13 +70,13 @@ sftp:
 vnc:
   engine: libvncserver
   listen: "127.0.0.1:5900"
-  executable: backends/windows/svnc-desktop.exe
+  executable: %s
   password_file: vnc-password.txt
   view_only: false
   compatibility:
     enabled: false
 audit: true
-`, strings.TrimSpace(string(root)))
+`, strings.TrimSpace(string(root)), strings.TrimSpace(string(executable)))
 	return createInstallationFile(name, []byte(settings))
 }
 
@@ -147,4 +155,14 @@ func validatePublicKeys(data []byte) error {
 		return errors.New("请至少保留一个客户端公钥；停止访问可使用“停止服务”")
 	}
 	return nil
+}
+
+func authorizedContains(data []byte, key ssh.PublicKey) bool {
+	for _, line := range bytes.Split(data, []byte("\n")) {
+		public, _, options, _, err := ssh.ParseAuthorizedKey(line)
+		if err == nil && len(options) == 0 && bytes.Equal(public.Marshal(), key.Marshal()) {
+			return true
+		}
+	}
+	return false
 }

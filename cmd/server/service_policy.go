@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"sshvnc/internal/config"
+	"jumpvnc/internal/config"
 )
 
 // A service may expose an explicitly scoped file directory. Its account's

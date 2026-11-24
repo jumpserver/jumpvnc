@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"net"
@@ -13,8 +12,8 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/sys/windows"
 
-	"sshvnc/internal/config"
-	"sshvnc/internal/vnc"
+	"jumpvnc/internal/config"
+	"jumpvnc/internal/vnc"
 )
 
 func settingPath(name, path string) string {
@@ -159,16 +158,6 @@ func (t *windowsTray) copyPanelSettings(command uintptr) {
 		return
 	}
 	setControlText(t.panel.keysHint, "已复制到剪贴板。")
-}
-
-func authorizedContains(data []byte, key ssh.PublicKey) bool {
-	for _, line := range bytes.Split(data, []byte("\n")) {
-		public, _, options, _, err := ssh.ParseAuthorizedKey(line)
-		if err == nil && len(options) == 0 && bytes.Equal(public.Marshal(), key.Marshal()) {
-			return true
-		}
-	}
-	return false
 }
 
 func setWindowsClipboard(owner uintptr, text string) error {

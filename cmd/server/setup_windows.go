@@ -9,7 +9,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func initializeWindowsService(name string) error {
+func initializePlatformService(name string) error {
 	if !windows.GetCurrentProcessToken().IsElevated() {
 		return errors.New("service initialization requires administrator privileges")
 	}

@@ -9,7 +9,7 @@ import (
 
 	"golang.org/x/sys/windows"
 
-	"sshvnc/internal/config"
+	"jumpvnc/internal/config"
 )
 
 // Runs in the logged-in user's session during explicit deployment acceptance.

@@ -18,8 +18,15 @@ foreach ($file in $files) {
   $sddl = (Get-Acl -LiteralPath $path).Sddl
   if ($sddl -match ';;;BU\)') { throw "Users can access private configuration: $file" }
 }
-# A second installation must preserve every identity and setting.
+# Exercise upgrades from the previous executable name without replacing credentials.
+$currentCommand = $service.PathName
+$legacyCommand = $currentCommand.Replace('\bin\jumpvnc.exe', '\bin\sshvnc.exe')
+Copy-Item (Join-Path $root 'bin\jumpvnc.exe') (Join-Path $root 'bin\sshvnc.exe')
+$changed = Invoke-CimMethod -InputObject $service -MethodName Change -Arguments @{PathName=$legacyCommand}
+if ($changed.ReturnValue -ne 0) { throw 'Cannot prepare legacy service fixture.' }
 Install-JumpVNC
+$upgraded = Get-CimInstance Win32_Service -Filter "Name='SuperVNC'"
+if ($upgraded.PathName -ne $currentCommand) { throw 'Upgrade retained the old executable name.' }
 foreach ($file in $files) {
   if ((Get-FileHash -LiteralPath (Join-Path $root $file)).Hash -ne $before[$file]) { throw "Upgrade replaced $file" }
 }

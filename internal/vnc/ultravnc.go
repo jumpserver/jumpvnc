@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"sshvnc/internal/config"
+	"jumpvnc/internal/config"
 )
 
 func checkUltraVNC(cfg config.VNC, dir string) error {

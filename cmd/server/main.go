@@ -11,9 +11,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"sshvnc/internal/config"
-	"sshvnc/internal/sshgateway"
-	"sshvnc/internal/vnc"
+	"jumpvnc/internal/config"
+	"jumpvnc/internal/sshgateway"
+	"jumpvnc/internal/vnc"
 )
 
 const productName = "JumpVNC Server"
@@ -28,18 +28,29 @@ func main() {
 	service := flag.Bool("service", false, "run under the Windows Service Control Manager")
 	manageService := flag.Bool("manage-service", false, "show the tray for the installed Windows service")
 	openPanel := flag.Bool("open-panel", false, "open the Windows service management window")
-	initializeService := flag.Bool("initialize-service", false, "initialize missing Windows service credentials and configuration")
+	initializeService := flag.Bool("initialize-service", false, "initialize missing service credentials and configuration")
+	connectionInfo := flag.Bool("connection-info", false, "print connection settings and VNC password without starting the server")
 	flag.Parse()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil)).With("product", productName)
 	var err error
-	if *initializeService {
+	if *connectionInfo {
+		if *initializeService || *service || *manageService || *openPanel || *noTray {
+			err = fmt.Errorf("connection information cannot be combined with initialization or runtime modes")
+		} else {
+			var info string
+			info, err = installationConnectionInfo(*name)
+			if err == nil {
+				fmt.Print(info)
+			}
+		}
+	} else if *initializeService {
 		if *service || *manageService || *openPanel || *noTray {
 			err = fmt.Errorf("initialization cannot be combined with runtime modes")
 		} else {
-			err = initializeWindowsService(*name)
+			err = initializePlatformService(*name)
 		}
 	} else if (*service && (*manageService || *openPanel || *noTray)) || (*noTray && (*manageService || *openPanel)) {
 		err = fmt.Errorf("service, service management, and foreground modes cannot be combined")

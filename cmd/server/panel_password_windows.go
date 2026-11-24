@@ -5,8 +5,8 @@ import (
 	"errors"
 	"path/filepath"
 
-	"sshvnc/internal/config"
-	"sshvnc/internal/vnc"
+	"jumpvnc/internal/config"
+	"jumpvnc/internal/vnc"
 )
 
 const (

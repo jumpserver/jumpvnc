@@ -45,7 +45,7 @@ Windows 默认安装为开机自动运行的系统服务。SFTP 默认关闭，�
 在仓库根目录构建 Agent：
 
 ```powershell
-go build -o bin\sshvnc.exe .\cmd\server
+go build -o bin\jumpvnc.exe .\cmd\server
 ```
 
 以存放配置文件的目录为基准，将后端放到 `backends\windows\svnc-desktop.exe`。复制 `configs/windows.example.yaml`，准备 SSH 主机密钥、公钥授权文件和 `vnc-password.txt`。密码文件是 **1–8 字节可打印 ASCII 明文**，允许结尾一个 LF/CRLF，不是 TigerVNC/UltraVNC 的加密密码文件。密码不传入命令行，也不写入日志。用 NTFS ACL 限定运行账户和 SYSTEM/管理员读取配置、密钥及密码；交换目录不要包含这些文件。
@@ -80,9 +80,9 @@ vnc:
 已有服务可以单独安装托盘登录入口：
 
 ```powershell
-.\deployments\windows\install-service-tray.ps1 -Agent .\bin\sshvnc.exe
+.\deployments\windows\install-service-tray.ps1 -Agent .\bin\jumpvnc.exe
 # 立即打开管理窗口：
-.\bin\sshvnc.exe -manage-service -open-panel
+.\bin\jumpvnc.exe -manage-service -open-panel
 ```
 
 托盘总是使用 Windows 服务注册的配置路径，`-config` 不会更改它管理的文件。同一用户、同一桌面和权限级别只保留一个管理托盘，重复打开管理窗口会激活已有窗口。安装时加 `-NoTray` 可只安装后台服务。
@@ -93,7 +93,7 @@ vnc:
 在部署目录打开管理员 PowerShell：
 
 ```powershell
-.\deployments\windows\install.ps1 -Agent .\bin\sshvnc.exe -Config .\service.yaml -Start
+.\deployments\windows\install.ps1 -Agent .\bin\jumpvnc.exe -Config .\service.yaml -Start
 Get-Service SuperVNC
 ```
 

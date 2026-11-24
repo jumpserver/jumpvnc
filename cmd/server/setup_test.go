@@ -8,8 +8,8 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"sshvnc/internal/config"
-	"sshvnc/internal/vnc"
+	"jumpvnc/internal/config"
+	"jumpvnc/internal/vnc"
 )
 
 func TestInstallationGeneratesWorkingDistinctCredentialsAndPreservesUpgrades(t *testing.T) {
@@ -77,5 +77,45 @@ func TestPublicKeysRejectPrivateKeysAndUnusableAuthorization(t *testing.T) {
 		if validatePublicKeys([]byte(input)) == nil {
 			t.Fatalf("accepted %q", input)
 		}
+	}
+}
+
+func TestLinuxInstallationBackendAndCurrentConnectionInformation(t *testing.T) {
+	dir := t.TempDir()
+	name := filepath.Join(dir, "config.yaml")
+	root := t.TempDir()
+	backend := filepath.Join(t.TempDir(), "svnc-desktop")
+	if err := os.WriteFile(backend, []byte("fixture"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := initializeServiceFilesWithBackend(name, root, backend); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(name)
+	if err != nil || cfg.VNC.Executable != backend {
+		t.Fatalf("Linux package backend not configured: %+v, %v", cfg.VNC, err)
+	}
+	original, err := os.ReadFile(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := config.WithSSHSettings(original, "127.0.0.1:15922", "custom-user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(name, updated, 0600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := installationConnectionInfo(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"SVNC", "127.0.0.1", "15922", "custom-user", "SHA256:", filepath.Join(dir, connectionKeyName)} {
+		if !bytes.Contains([]byte(info), []byte(expected)) {
+			t.Fatalf("connection information omitted %q", expected)
+		}
+	}
+	if bytes.Contains([]byte(info), []byte("PRIVATE KEY")) {
+		t.Fatal("connection information leaked a private key")
 	}
 }

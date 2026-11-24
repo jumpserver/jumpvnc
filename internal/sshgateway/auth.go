@@ -12,7 +12,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"sshvnc/internal/config"
+	"jumpvnc/internal/config"
 )
 
 func loadAuth(cfg config.SSH) (ssh.Signer, map[string]struct{}, error) {

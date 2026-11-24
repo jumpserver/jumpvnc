@@ -2,7 +2,7 @@
 param(
   [Parameter(Mandatory=$true)][string]$Agent,
   [Parameter(Mandatory=$true)][string]$Config,
-  [string]$TaskName='sshvnc-agent',
+  [string]$TaskName='jumpvnc-agent',
   [switch]$AtLogon,
   [switch]$Start,
   [switch]$NoTray

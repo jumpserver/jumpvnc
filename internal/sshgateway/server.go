@@ -14,8 +14,8 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"sshvnc/internal/config"
-	"sshvnc/internal/sftpfs"
+	"jumpvnc/internal/config"
+	"jumpvnc/internal/sftpfs"
 )
 
 type Server struct {
@@ -144,7 +144,7 @@ func (s *Server) serveConn(ctx context.Context, raw net.Conn, log *slog.Logger) 
 		for req := range requests {
 			allowed := req.Type == "keepalive@openssh.com" && len(req.Payload) == 0
 			var payload []byte
-			if req.Type == "sftp-location@sshvnc" && len(req.Payload) == 0 && s.files != nil {
+			if (req.Type == "sftp-location@jumpvnc" || req.Type == "sftp-location@sshvnc") && len(req.Payload) == 0 && s.files != nil {
 				allowed = true
 				payload, _ = json.Marshal(struct {
 					Root string `json:"root"`

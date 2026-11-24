@@ -1,4 +1,4 @@
-module sshvnc
+module jumpvnc
 
 go 1.26.9
 

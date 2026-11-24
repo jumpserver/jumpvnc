@@ -8,13 +8,13 @@
 
 ```bash
 mkdir -p bin
-go build -o bin/sshvnc ./cmd/server
+go build -o bin/jumpvnc ./cmd/server
 ```
 
 Windows 下构建 Agent：
 
 ```powershell
-go build -o bin\sshvnc.exe .\cmd\server
+go build -o bin\jumpvnc.exe .\cmd\server
 ```
 
 Agent 与桌面后端分别构建，根据平台选择后端：

@@ -4,7 +4,7 @@
 set -euo pipefail
 umask 077
 
-agent=$(realpath "${1:?pass the Linux sshvnc binary}")
+agent=$(realpath "${1:?pass the Linux jumpvnc binary}")
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 tmp=$(mktemp -d)
 pids=()
@@ -93,16 +93,16 @@ if ssh -p 5922 "${options[@]}" vncuser@127.0.0.1 true >"$tmp/exec.log" 2>&1; the
 fi
 grep -q 'exec request failed' "$tmp/exec.log"
 
-DISPLAY=$desktop xterm -geometry 64x16+40+40 -T sshvnc-input -e sh -c \
+DISPLAY=$desktop xterm -geometry 64x16+40+40 -T jumpvnc-input -e sh -c \
     'IFS= read -r line; printf "%s\n" "$line" > "$1"' sh "$tmp/remote-input" >"$tmp/xterm.log" 2>&1 &
 pids+=("$!")
-until_ready env DISPLAY="$desktop" xdotool search --onlyvisible --name sshvnc-input >/dev/null
+until_ready env DISPLAY="$desktop" xdotool search --onlyvisible --name jumpvnc-input >/dev/null
 DISPLAY=$viewer vncviewer -Shared -PasswordFile "$tmp/viewer.passwd" \
     127.0.0.1::15900 >"$tmp/viewer.log" 2>&1 &
 pids+=("$!")
 until_ready grep -qsi 'Using pixel format' "$tmp/viewer.log"
 viewer_window=$(DISPLAY=$viewer xdotool search --maxdepth 1 --onlyvisible --name '.+' | tail -1)
-desktop_window=$(DISPLAY=$desktop xdotool search --onlyvisible --name sshvnc-input | tail -1)
+desktop_window=$(DISPLAY=$desktop xdotool search --onlyvisible --name jumpvnc-input | tail -1)
 # Xvfb has no window manager to assign keyboard focus.
 DISPLAY=$desktop xdotool windowfocus "$desktop_window"
 DISPLAY=$viewer xdotool windowfocus "$viewer_window"

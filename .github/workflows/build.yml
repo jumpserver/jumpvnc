@@ -35,7 +35,7 @@ jobs:
             libjpeg62-turbo-dev zlib1g-dev libavcodec-dev libavutil-dev libswscale-dev ffmpeg \
             libx11-dev libxtst-dev libxfixes-dev \
             xvfb xterm xdotool xauth xclip tigervnc-tools tigervnc-viewer \
-            tigervnc-scraping-server openssh-client iproute2 xfonts-base
+            tigervnc-scraping-server openssh-client iproute2 xfonts-base sudo
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
@@ -51,7 +51,7 @@ jobs:
           go vet ./...
       - name: Build Agent and X11 backend
         run: |
-          go build -trimpath -o bin/sshvnc ./cmd/server
+          go build -trimpath -o bin/jumpvnc ./cmd/server
           sh desktop/linux/prepare-sources.sh
           cmake -S desktop/linux -B build/linux -DCMAKE_BUILD_TYPE=Release
           cmake --build build/linux --target svnc-desktop h264-smoke --parallel 2
@@ -62,21 +62,22 @@ jobs:
         run: |
           useradd --create-home --shell /bin/bash svnc-ci
           runuser -u svnc-ci -- env SVNC_RFB_TEST_BINARY=/tmp/svnc-rfb.test SVNC_TEST_H264=1 \
-            bash tests/integration/libvncserver.sh bin/sshvnc build/linux/svnc-desktop
+            bash tests/integration/libvncserver.sh bin/jumpvnc build/linux/svnc-desktop
           runuser -u svnc-ci -- env SVNC_RFB_TEST_BINARY=/tmp/svnc-rfb.test \
             SVNC_TEST_H264_ODD_GEOMETRY=1 SVNC_TEST_DESKTOP_GEOMETRY=801x601x24 \
-            bash tests/integration/libvncserver.sh bin/sshvnc build/linux/svnc-desktop
-          runuser -u svnc-ci -- bash tests/integration/tigervnc.sh bin/sshvnc
+            bash tests/integration/libvncserver.sh bin/jumpvnc build/linux/svnc-desktop
+          runuser -u svnc-ci -- bash tests/integration/tigervnc.sh bin/jumpvnc
       - name: Package Linux server
         env:
           ARCH: ${{ matrix.arch }}
         run: |
           package="jumpvnc-server-linux-$ARCH"
           mkdir -p "dist/$package/bin" "dist/$package/sources"
-          cp bin/sshvnc "dist/$package/bin/"
+          cp bin/jumpvnc "dist/$package/bin/"
           cmake --install build/linux --prefix "$PWD/dist/$package"
           cp -R configs deployments docs "dist/$package/"
           cp README.md LICENSE THIRD_PARTY_NOTICES.md "dist/$package/"
+          install -m 755 deployments/linux/install.sh "dist/$package/install.sh"
           cp desktop/linux/README.md "dist/$package/BACKEND.md"
           go mod vendor -o "$PWD/dist/$package/sources/go-vendor"
           git -C desktop/linux/libvncserver archive --format=tar.gz --output="$PWD/dist/$package/sources/libvncserver.tar.gz" HEAD
@@ -84,6 +85,13 @@ jobs:
           tar -C dist -czf "dist/$package.tar.gz" "$package"
           cd dist
           sha256sum "$package.tar.gz" > "$package.tar.gz.sha256"
+      - name: Check installation and upgrade from the actual Linux tar package
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          mkdir -p /tmp/jumpvnc-package-check
+          tar -xzf "dist/jumpvnc-server-linux-$ARCH.tar.gz" -C /tmp/jumpvnc-package-check
+          bash deployments/linux/test-install.sh "/tmp/jumpvnc-package-check/jumpvnc-server-linux-$ARCH"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: jumpvnc-server-linux-${{ matrix.arch }}
@@ -111,7 +119,7 @@ jobs:
           set -euo pipefail
           go test -race ./...
           go vet ./...
-          go build -trimpath -o bin/sshvnc.exe ./cmd/server
+          go build -trimpath -o bin/jumpvnc.exe ./cmd/server
       - name: Prepare pinned backend sources
         shell: bash
         run: sh desktop/windows/prepare-sources.sh
@@ -138,7 +146,7 @@ jobs:
           $package = 'jumpvnc-server-windows-amd64'
           $root = Join-Path $PWD "dist/$package"
           New-Item -ItemType Directory -Force "$root/bin", "$root/backends/windows", "$root/sources", "$root/licenses" | Out-Null
-          Copy-Item bin/sshvnc.exe "$root/bin/"
+          Copy-Item bin/jumpvnc.exe "$root/bin/"
           Copy-Item desktop/windows/build/Release/svnc-desktop.exe "$root/backends/windows/"
           Copy-Item configs, deployments, docs $root -Recurse
           Copy-Item README.md, LICENSE, THIRD_PARTY_NOTICES.md $root

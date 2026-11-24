@@ -10,7 +10,7 @@ Plasma 6 可安装 `kde-plasma-desktop kwin-x11 konsole dolphin systemsettings p
 
 | 路径 | 用途 |
 | --- | --- |
-| `/opt/svnc/bin/sshvnc` | Go Agent |
+| `/opt/svnc/bin/jumpvnc` | Go Agent |
 | `/opt/svnc/backends/linux/svnc-desktop` | 本机编译的 LibVNCServer 后端 |
 | `/opt/svnc/state/config.yaml` | 私有配置 |
 | `/opt/svnc/state/ssh_host_ed25519_key` | SSH 主机私钥，重启时保留 |

@@ -15,7 +15,7 @@ import (
 
 	"github.com/pkg/sftp"
 
-	"sshvnc/internal/config"
+	"jumpvnc/internal/config"
 )
 
 type Filesystem struct {

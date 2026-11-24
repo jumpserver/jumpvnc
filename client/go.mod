@@ -1,4 +1,4 @@
-module sshvnc/client
+module jumpvnc/client
 
 go 1.27.3
 

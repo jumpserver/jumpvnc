@@ -25,7 +25,7 @@ func TestInstalledManagementWindow(t *testing.T) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	root := filepath.Join(os.Getenv("ProgramFiles"), "SuperVNC")
-	command := exec.Command(filepath.Join(root, "bin", "sshvnc.exe"), "-manage-service", "-open-panel")
+	command := exec.Command(filepath.Join(root, "bin", "jumpvnc.exe"), "-manage-service", "-open-panel")
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
 	}

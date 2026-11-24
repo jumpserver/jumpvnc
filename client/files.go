@@ -16,7 +16,7 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-const uploadPrefix = ".sshvnc-upload-"
+const uploadPrefix = ".jumpvnc-upload-"
 
 type FileLocation struct {
 	Root string `json:"root"`
@@ -24,7 +24,11 @@ type FileLocation struct {
 }
 
 func readFileLocation(client *ssh.Client) *FileLocation {
-	ok, data, err := client.SendRequest("sftp-location@sshvnc", true, nil)
+	ok, data, err := client.SendRequest("sftp-location@jumpvnc", true, nil)
+	if err == nil && !ok {
+		// Older servers retain the previous extension name.
+		ok, data, err = client.SendRequest("sftp-location@sshvnc", true, nil)
+	}
 	if err != nil || !ok || len(data) > 16384 {
 		return nil
 	}
@@ -155,7 +159,7 @@ func (s *session) download(remote, local string, report func(Progress)) error {
 	if !info.Mode().IsRegular() {
 		return errors.New("请选择普通文件")
 	}
-	output, err := os.CreateTemp(filepath.Dir(local), ".sshvnc-download-*")
+	output, err := os.CreateTemp(filepath.Dir(local), ".jumpvnc-download-*")
 	if err != nil {
 		return err
 	}

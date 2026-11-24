@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"sshvnc/internal/config"
+	"jumpvnc/internal/config"
 )
 
 type Backend struct {

@@ -14,7 +14,7 @@ Environment=XDG_SESSION_TYPE=x11
 Environment=LANG=C.UTF-8
 UMask=0077
 ExecStartPre=/usr/local/libexec/svnc-wait-desktop
-ExecStart=/opt/svnc/bin/sshvnc -config /opt/svnc/state/config.yaml
+ExecStart=/opt/svnc/bin/jumpvnc -config /opt/svnc/state/config.yaml
 Restart=on-failure
 RestartSec=3
 KillMode=control-group

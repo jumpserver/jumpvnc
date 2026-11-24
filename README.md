@@ -46,7 +46,7 @@ Linux 当前支持 X11，Windows 共享控制台桌面；多个连接访问同�
 
 ### 2. 安装服务端
 
-以下使用下载包中的程序部署，无需安装 Go、Node.js 或编译工具。首次安装前，准备客户端的 SSH 公钥文件（如 `id_ed25519.pub`），私钥保留在客户端。服务端只需向客户端开放 TCP `5922`，内部 VNC 端口 `5900` 保持回环监听。
+以下使用下载包中的程序部署，无需安装 Go、Node.js 或编译工具。安装程序自动生成连接密钥，也可在安装后改用已有 SSH 公钥。服务端只需向客户端开放 TCP `5922`，内部 VNC 端口 `5900` 保持回环监听。
 
 #### Windows：双击安装
 
@@ -58,64 +58,25 @@ Linux 当前支持 X11，Windows 共享控制台桌面；多个连接访问同�
 
 服务随系统启动，退出托盘不影响远程连接。再次运行安装程序可升级，保留已有配置与凭据；卸载会移除服务和防火墙规则，保留用户配置及文件。Windows 登录或锁屏界面仍需输入 Windows 账号凭据。
 
-#### Linux：安装 X11 桌面服务
+#### Linux：运行安装脚本
 
-使用下载包内置的 LibVNCServer + X11 后端。目标系统需要兼容的运行库；Debian 13 可安装：
-
-```bash
-sudo apt-get install openssh-client libavcodec61 libavutil59 libswscale8 \
-  libjpeg62-turbo zlib1g libx11-6 libxtst6 libxfixes3
-```
-
-在已登录的 X11 桌面中，以当前桌面用户打开 Bash。解压服务端压缩包，进入包含 `bin`、`backends`、`configs` 和 `deployments` 的目录。首次部署执行以下命令，将 `/path/to/client.pub` 换成客户端的 SSH 公钥路径：
+下载对应架构的 tar.gz，在已登录的 X11 桌面终端解压并安装（以下以 amd64 为例）：
 
 ```bash
-sudo install -D -m 755 bin/sshvnc /opt/jumpvnc/bin/sshvnc
-sudo install -D -m 755 backends/linux/svnc-desktop /opt/jumpvnc/backends/linux/svnc-desktop
-
-umask 077
-state=/var/lib/sshvnc/$USER
-sudo install -d -m 700 -o "$USER" "$state"
-cp configs/linux.example.yaml "$state/config.yaml"
-sed -i 's|executable: backends/linux/svnc-desktop|executable: /opt/jumpvnc/backends/linux/svnc-desktop|' "$state/config.yaml"
-ssh-keygen -t ed25519 -N '' -f "$state/ssh_host_ed25519_key"
-cp /path/to/client.pub "$state/authorized_keys"
-read -r -s -p '设置 VNC 密码（1–8 个可打印 ASCII 字符）: ' vnc_password
-printf '\n'
-printf '%s\n' "$vnc_password" > "$state/vnc-password.txt"
-unset vnc_password
-ssh-keygen -lf "$state/ssh_host_ed25519_key.pub"
+tar -xzf jumpvnc-server-linux-amd64.tar.gz
+cd jumpvnc-server-linux-amd64
+bash install.sh
 ```
 
-保存主机密钥指纹，接着安装 systemd 用户服务，使其随图形会话运行并在异常退出后重启：
+脚本自动安装程序、准备运行库、生成密钥和密码，并配置桌面登录自启。安装结束会显示连接信息和私钥文件位置；升级时重新运行新包中的脚本，原配置与凭据会保留。
 
-```bash
-mkdir -p "$HOME/.config/systemd/user"
-cp deployments/sshvnc.service "$HOME/.config/systemd/user/sshvnc.service"
-sed -i 's|%h/.local/bin/sshvnc|/opt/jumpvnc/bin/sshvnc|' "$HOME/.config/systemd/user/sshvnc.service"
-systemctl --user daemon-reload
-systemctl --user import-environment DISPLAY XAUTHORITY
-systemctl --user add-wants graphical-session.target sshvnc.service
-systemctl --user start sshvnc.service
-systemctl --user status sshvnc.service
-```
-
-此方式依赖已登录的 X11 图形会话，不提供登录前桌面。桌面环境需启动 `graphical-session.target` 并向用户服务导入 `DISPLAY` 和 `XAUTHORITY`；重新登录后应确认服务和桌面连接正常。无显示器或需开机即运行的独立桌面，见 [Xvfb 部署说明](deployments/linux/README.md)。
-
-SFTP 默认访问运行用户的主目录，可在 `config.yaml` 中调整 `sftp.root` 和 `sftp.mode`。配置、密钥、密码和程序放在 SFTP 根目录之外。日常管理使用：
-
-```bash
-systemctl --user restart sshvnc.service
-journalctl --user -u sshvnc.service -n 50
-```
-
-升级时先停止用户服务，备份后替换 `/opt/jumpvnc` 中的程序，保留 `/var/lib/sshvnc/$USER` 中的配置和凭据，再启动服务。
+当前下载包基于 Debian 13 构建，支持 amd64 / arm64。详细用法、服务管理及无显示器部署见 [Linux 安装说明](docs/linux-install.md)。
 
 ### 3. 连接桌面与传输文件
 
 1. 在 Mac 上解压客户端，打开 `JumpVNC.app`，添加连接。
-2. 协议选择 **SVNC**，填写服务器地址、端口 `5922` 和用户名 `vncuser`。Windows 自动生成的连接私钥可从管理窗口复制，保存为 Mac 上的私钥文件，再在客户端“SSH 私钥文件”中填写该文件路径。使用已有密钥时也可留空，客户端自动使用本机身份；加密私钥需先加入 SSH agent。
-3. 首次连接时核对管理窗口显示的主机指纹，再输入 VNC 密码。Windows 的密码可在管理窗口显示，或通过“复制连接信息”获取；Linux 使用部署时设置的密码和主机指纹。
+2. 协议选择 **SVNC**，填写服务器地址、端口 `5922` 和用户名 `vncuser`。连接私钥可从 Windows 管理窗口复制，或从 Linux 安装输出指示的文件获取，保存到 Mac 后在客户端“SSH 私钥文件”中填写路径。使用已有密钥时也可留空，客户端自动使用本机身份；加密私钥需先加入 SSH agent。
+3. 首次连接时核对管理窗口显示的主机指纹，再输入 VNC 密码。Windows 的密码可在管理窗口显示，或通过“复制连接信息”获取；Linux 的密码和主机指纹会在安装结束时显示。
 4. 进入桌面后，点击“文件管理”浏览远程目录，从 Finder 拖入文件上传，或选中文件下载到本机。文件管理需服务端已启用 SFTP。
 5. 按需在“设置”中切换清晰或视频模式。当前窗口激活时，文本剪贴板自动双向同步。
 

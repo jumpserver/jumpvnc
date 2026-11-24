@@ -11,7 +11,7 @@ import (
 
 	"golang.org/x/sys/windows"
 
-	"sshvnc/internal/config"
+	"jumpvnc/internal/config"
 )
 
 var (

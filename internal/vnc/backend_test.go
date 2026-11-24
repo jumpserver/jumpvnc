@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"testing"
 
-	"sshvnc/internal/config"
+	"jumpvnc/internal/config"
 )
 
 func TestLibVNCCommand(t *testing.T) {

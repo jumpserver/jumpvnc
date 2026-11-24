@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"sshvnc/internal/config"
+	"jumpvnc/internal/config"
 )
 
 func TestVNCCompatibilityLifecycle(t *testing.T) {
