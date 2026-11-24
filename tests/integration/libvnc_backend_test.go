@@ -93,7 +93,7 @@ func connectRFB(address string, password []byte, forceNone bool) (*rfbProbe, err
 	if _, err = io.ReadFull(conn, name); err != nil {
 		return fail(err)
 	}
-	if !strings.HasPrefix(string(name), "SuperVNC Server / LibVNCServer") &&
+	if !strings.HasPrefix(string(name), "JumpVNC Server / LibVNCServer") &&
 		!strings.HasPrefix(string(name), "SVNC / LibVNCServer") {
 		return fail(fmt.Errorf("unexpected desktop backend %q", name))
 	}

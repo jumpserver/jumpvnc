@@ -72,6 +72,7 @@ var (
 
 type managementWindow struct {
 	window, status, start, stop, restart, lastError       uintptr
+	admin, configEdit                                     uintptr
 	ssh, vnc, compatibility, compatibilityToggle, sshUser uintptr
 	rootLabel, rootInput, rootBrowse, rootSave, rootHint  uintptr
 	rootDirectory, rootHome                               uintptr
@@ -92,6 +93,7 @@ func (t *windowsTray) openPanel() {
 			return
 		}
 	}
+	t.service.update()
 	t.updatePanel()
 	t.refreshPanelSettings(true)
 	showWindow.Call(t.panel.window, swRestore)
@@ -103,7 +105,7 @@ func (t *windowsTray) openPanel() {
 }
 
 func (t *windowsTray) createPanel() error {
-	className := windows.StringToUTF16Ptr("SuperVNC.Server.Management")
+	className := windows.StringToUTF16Ptr("JumpVNC.Server.Management")
 	if !t.panel.classRegistered {
 		cursor, _, _ := loadCursor.Call(0, idcArrow)
 		class := windowClass{
@@ -140,13 +142,14 @@ func (t *windowsTray) createPanel() error {
 		{"BUTTON", "启动服务", wsTabStop, 0, 36, 64, 100, 28, menuStart, &t.panel.start},
 		{"BUTTON", "停止服务", wsTabStop, 0, 146, 64, 100, 28, menuStop, &t.panel.stop},
 		{"BUTTON", "重启服务", wsTabStop, 0, 256, 64, 100, 28, menuRestart, &t.panel.restart},
+		{"BUTTON", "以管理员身份管理", wsTabStop, 0, 366, 64, 168, 28, menuAdmin, &t.panel.admin},
 		{"BUTTON", "连接配置", bsGroupBox | wsGroup, 0, 20, 121, 530, 135, 0, nil},
 		{"STATIC", "", ssNoPrefix, 0, 36, 144, 498, 18, idPanelSSH, &t.panel.ssh},
 		{"STATIC", "", ssNoPrefix, 0, 36, 164, 498, 18, idPanelVNC, &t.panel.vnc},
 		{"STATIC", "", ssNoPrefix, 0, 36, 184, 388, 18, idPanelCompat, &t.panel.compatibility},
 		{"BUTTON", "开启兼容", wsTabStop, 0, 434, 178, 100, 26, idCompatToggle, &t.panel.compatibilityToggle},
 		{"STATIC", "", ssNoPrefix, 0, 36, 204, 498, 18, idPanelSSHUser, &t.panel.sshUser},
-		{"STATIC", "Windows 运行用户：" + windowsRunUser(), ssNoPrefix, 0, 36, 224, 498, 18, idPanelRunUser, nil},
+		{"STATIC", "Windows 运行用户：" + t.backendRunUser(), ssNoPrefix, 0, 36, 224, 498, 18, idPanelRunUser, nil},
 		{"BUTTON", "SFTP", bsGroupBox | wsGroup, 0, 20, 267, 530, 122, 0, nil},
 		{"STATIC", "根目录", ssNoPrefix, 0, 36, 288, 498, 18, 0, &t.panel.rootLabel},
 		{"EDIT", "", wsTabStop | esAutoHScroll, wsExClientEdge, 36, 311, 232, 24, idRootInput, &t.panel.rootInput},
@@ -165,7 +168,7 @@ func (t *windowsTray) createPanel() error {
 		{"STATIC", "", ssNoPrefix, 0, 36, 484, 498, 18, idPasswordHint, &t.panel.passwordHint},
 		{"BUTTON", "配置文件", bsGroupBox | wsGroup, 0, 20, 520, 530, 57, 0, nil},
 		{"EDIT", t.configPath, wsTabStop | esAutoHScroll | esReadOnly, wsExClientEdge, 36, 541, 388, 24, idPanelConfig, nil},
-		{"BUTTON", "编辑配置", wsTabStop, 0, 434, 539, 100, 28, menuConfig, nil},
+		{"BUTTON", "编辑配置", wsTabStop, 0, 434, 539, 100, 28, menuConfig, &t.panel.configEdit},
 		{"BUTTON", "查看错误", wsTabStop | wsGroup, 0, 20, 587, 100, 28, menuError, &t.panel.lastError},
 		{"BUTTON", "关闭窗口", wsTabStop, 0, 450, 587, 100, 28, idCancel, nil},
 	}
@@ -193,10 +196,19 @@ func (t *windowsTray) updatePanel() {
 		return
 	}
 	setControlText(t.panel.status, "状态："+t.status())
-	setControlEnabled(t.panel.start, t.service.canStart())
-	setControlEnabled(t.panel.stop, t.service.canStop())
-	setControlEnabled(t.panel.restart, t.service.canStop())
-	setControlEnabled(t.panel.lastError, t.service.lastErr != nil)
+	setControlEnabled(t.panel.start, t.canConfigure() && t.service.canStart())
+	setControlEnabled(t.panel.stop, t.canConfigure() && t.service.canStop())
+	setControlEnabled(t.panel.restart, t.canConfigure() && t.service.canStop())
+	setControlEnabled(t.panel.lastError, t.service.currentError() != nil || (t.registration != nil && t.canConfigure()))
+	setControlEnabled(t.panel.configEdit, t.canConfigure())
+	if t.registration == nil || t.canConfigure() {
+		showWindow.Call(t.panel.admin, swHide)
+	}
+	if t.registration != nil && t.service.currentError() == nil {
+		setControlText(t.panel.lastError, "查看日志")
+	} else {
+		setControlText(t.panel.lastError, "查看错误")
+	}
 }
 
 func setControlEnabled(control uintptr, enabled bool) {
@@ -251,7 +263,7 @@ func (t *windowsTray) panelProc(hwnd uintptr, message uint32, wParam, lParam uin
 			t.savePanelPassword()
 		case idCompatToggle:
 			t.togglePanelCompatibility()
-		case menuStart, menuStop, menuRestart, menuConfig, menuError:
+		case menuStart, menuStop, menuRestart, menuConfig, menuError, menuAdmin:
 			if lParam != 0 {
 				t.handleCommand(command, hwnd)
 			}
@@ -260,4 +272,11 @@ func (t *windowsTray) panelProc(hwnd uintptr, message uint32, wParam, lParam uin
 	}
 	result, _, _ := defWindowProc.Call(hwnd, uintptr(message), wParam, lParam)
 	return result
+}
+
+func (t *windowsTray) backendRunUser() string {
+	if t.registration != nil {
+		return t.registration.runUser + "（系统服务）"
+	}
+	return windowsRunUser()
 }

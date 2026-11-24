@@ -133,7 +133,7 @@ func launchConsoleProcess(session uint32, executable string, args []string) (win
 }
 
 func consoleSASEvent() (windows.Handle, string, error) {
-	name := `Global\SuperVNC-SAS-` + rand.Text()
+	name := `Global\JumpVNC-SAS-` + rand.Text()
 	name16, _ := windows.UTF16PtrFromString(name)
 	descriptor, err := windows.SecurityDescriptorFromString("D:P(A;;GA;;;SY)")
 	if err != nil {

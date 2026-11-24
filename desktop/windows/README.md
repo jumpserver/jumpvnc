@@ -1,4 +1,4 @@
-# SuperVNC Server Windows 桌面后端
+# JumpVNC Server Windows 桌面后端
 
 `svnc-desktop.exe` 使用 LibVNCServer 0.9.15、libjpeg-turbo 和 DXGI Desktop Duplication，共享当前登录用户的主屏。Go Agent 管理后端生命周期，并提供 SSH 转发、SFTP、授权和审计。文件传输只使用 SFTP；后端禁用 UltraVNC 文件传输，不编译 TightVNC 文件扩展。
 
@@ -48,7 +48,9 @@ vnc:
 
 ### 托盘控制
 
-在交互式桌面启动 Agent 后，双击通知区域中的 `SuperVNC Server` 图标即可打开管理窗口。窗口显示服务状态和当前 YAML 配置文件的路径，可以启动、停止、重启服务，或用记事本编辑配置。保存后重启服务即可应用新配置。如果服务已停止，选「启动服务」。启动失败或后端意外退出时，可选「查看错误」后重试。
+已安装 Windows 系统服务时，在交互式桌面直接启动 Agent 会自动进入服务管理模式，不再启动另一份桌面后端。未安装系统服务时，保留原有的独立托盘模式。双击通知区域中的 `JumpVNC Server` 图标即可打开管理窗口。窗口显示服务状态和当前 YAML 配置文件的路径，可以启动、停止、重启服务，或用记事本编辑配置。保存后重启服务即可应用新配置。如果服务已停止，选「启动服务」。启动失败或后端意外退出时，可选「查看错误」后重试。
+
+以下 SFTP 和兼容入口设置用于独立托盘模式；系统服务管理窗口会禁用这两项。
 
 「连接配置」显示配置中的 SSH 监听、VNC 后端、普通 VNC 兼容入口和 SSH 登录用户名，也显示实际启动 Agent 的 Windows 运行用户。SSH 登录用户名可通过 YAML 的 `ssh.user` 修改，客户端连接时需使用新用户名。Windows 运行用户由启动 Agent 的桌面会话或计划任务决定。用「开启兼容」或「关闭兼容」可保存普通 VNC 入口开关，重启后生效。兼容入口使用 VNC 密码，流量未经 SSH 加密。
 
@@ -56,7 +58,7 @@ vnc:
 
 使用托管的 LibVNCServer 后端时，「显示密码」可以查看当前密码，切走或关闭窗口会再次遮住。在「新密码」中输入 1–8 个可打印 ASCII 字符，再选「保存密码」，即可更新后端的密码文件。更改目录或密码后，重启服务生效。
 
-关闭管理窗口后，Agent 继续驻留在托盘。右键菜单也可打开管理窗口、控制服务和查看错误。停止服务会断开现有桌面和 SFTP 会话。要结束 Agent，可在右键菜单中选「退出 SuperVNC」。
+关闭管理窗口后，Agent 继续驻留在托盘。右键菜单也可打开管理窗口、控制服务和查看错误。停止服务会断开现有桌面和 SFTP 会话。要结束 Agent，可在右键菜单中选「退出 JumpVNC」。
 
 需要由计划任务在后端故障后自动重试时，注册任务时加 `-NoTray`。直接运行 Agent 时可加 `-no-tray`。非交互会话也使用此运行方式，服务失败时进程以非零状态退出。
 
@@ -65,6 +67,21 @@ vnc:
 ### Windows 系统服务
 
 服务模式由 Windows 服务控制管理器开机启动。Agent 在 Session 0 运行，`svnc-desktop.exe` 在 Windows 控制台会话里跟随当前输入桌面。服务模式使用 DXGI 抓屏，可在 DXGI 初始化失败、抓屏中断或没有首帧时回退到 Windows GDI。两种抓屏方式都依赖 Windows 提供可捕获的控制台画面。
+
+服务显示名称为 `JumpVNC Server`；内部服务名 `SuperVNC` 和安装目录沿用旧标识，以兼容已有部署。
+
+安装脚本默认同时配置登录后自动显示托盘，以及开始菜单中的 **JumpVNC Server** 入口。托盘读取系统服务的实际状态，可启动、停止、重启服务、修改 VNC 密码、编辑 `service.yaml` 和查看服务日志；关闭管理窗口只隐藏窗口，退出托盘或注销用户不会停止后台系统服务。配置和密码修改后需重启服务。普通用户可以查看服务状态；点击「以管理员身份管理」经 Windows UAC 授权后进行控制和配置。SFTP 与普通 VNC 入口继续保持关闭。
+
+已有服务可以单独安装托盘登录入口：
+
+```powershell
+.\deployments\windows\install-service-tray.ps1 -Agent .\bin\sshvnc.exe
+# 立即打开管理窗口：
+.\bin\sshvnc.exe -manage-service -open-panel
+```
+
+托盘总是使用 Windows 服务注册的配置路径，`-config` 不会更改它管理的文件。同一用户、同一桌面和权限级别只保留一个管理托盘，重复打开管理窗口会激活已有窗口。安装时加 `-NoTray` 可只安装后台服务。
+
 
 用管理员权限把发布包解压到 `%ProgramFiles%\SuperVNC`。将 [服务模式示例](../../configs/windows.service.example.yaml) 复制为部署目录下的 `service.yaml`，并准备 SSH 主机密钥、`authorized_keys` 和 `vnc-password.txt`。服务以 `LocalSystem` 运行，限制部署目录、配置引用的可执行文件及密钥文件的 ACL，只允许管理员和 SYSTEM 修改。服务模式要求使用 SSH/SVNC 和 `libvncserver` 后端，配置中关闭普通 VNC 兼容入口与 SFTP。回环后端只接受来自 Agent 进程的连接。若已有托盘或计划任务占用同一端口，先停止相应实例。
 
@@ -84,7 +101,7 @@ Get-Service SuperVNC
 - 仅 IPv4 回环监听，使用独立 VNC 密码认证，SSH 承担远程传输加密。
 - 主屏画面、普通键鼠、滚轮；每个连接独立跟踪按键状态，断线释放该连接持有的按键。
 - `view_only: true` 在服务端拒绝键鼠和客户端剪贴板写入，仍可查看画面和接收文本剪贴板。SFTP 的上传/下载权限通过 `sftp.mode` 单独配置。
-- 双向文本剪贴板：ExtendedClipboard 支持 UTF-8，旧客户端使用 Latin-1 回退；不传文件、HTML 或图像。SuperVNC 客户端在当前桌面窗口激活时自动双向同步系统文本剪贴板，也可通过“剪贴板”窗口手动发送或复制文本。
+- 双向文本剪贴板：ExtendedClipboard 支持 UTF-8，旧客户端使用 Latin-1 回退；不传文件、HTML 或图像。JumpVNC 客户端在当前桌面窗口激活时自动双向同步系统文本剪贴板，也可通过“剪贴板”窗口手动发送或复制文本。
 - Windows 光标形状、热点、隐藏状态和位置通过 RFB 传输。半透明边缘与老式反色光标使用掩码近似，尚未覆盖所有自定义/动画光标。
 - DXGI 访问丢失后保留连接并清空旧画面，重试普通桌面抓屏。主屏分辨率变化通过 NewFBSize 通知支持的客户端，不支持的客户端需要重连。
 

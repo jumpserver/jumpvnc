@@ -1,8 +1,8 @@
-# SuperVNC
+# JumpVNC
 
-SuperVNC 是 JumpServer 团队开发的远程桌面工具。服务端 `sshvnc` 共享 Linux X11 或 Windows 当前登录用户的桌面，macOS 上可用 SuperVNC Viewer 连接。
+JumpVNC 是 JumpServer 团队开发的远程桌面工具。服务端 `sshvnc` 共享 Linux X11 或 Windows 当前登录用户的桌面，macOS 上可用 JumpVNC Viewer 连接。
 
-默认只需开放 TCP 5922。服务端用 SSH 公钥认证，桌面通过 `vnc` 子系统传输 RFB，文件通过同一端口走 SFTP。协议细节见 [SVNC 规范](docs/protocol.md)。
+默认只需开放 TCP 5922。服务端用 SSH 公钥认证，桌面通过 `vnc` 子系统传输 RFB，文件通过同一端口走 SFTP。协议名保留 SVNC，产品名使用 JumpVNC。协议细节见 [SVNC 规范](docs/protocol.md)。
 
 ## 下载
 
@@ -10,9 +10,9 @@ SuperVNC 是 JumpServer 团队开发的远程桌面工具。服务端 `sshvnc` �
 
 | 平台 | 产物 |
 | --- | --- |
-| macOS（Apple Silicon / Intel） | `supervnc-viewer-macos-universal` |
-| Linux（amd64 / arm64） | `supervnc-server-linux-amd64` / `supervnc-server-linux-arm64` |
-| Windows（amd64） | `supervnc-server-windows-amd64` |
+| macOS（Apple Silicon / Intel） | `jumpvnc-viewer-macos-universal` |
+| Linux（amd64 / arm64） | `jumpvnc-server-linux-amd64` / `jumpvnc-server-linux-arm64` |
+| Windows（amd64） | `jumpvnc-server-windows-amd64` |
 
 ## Linux 快速启动
 
@@ -39,11 +39,11 @@ vncpasswd "$state/vnc.passwd"
 
 ## Windows
 
-在已登录用户的交互会话中运行 `sshvnc.exe`。默认后端是 LibVNCServer + DXGI。双击托盘图标可打开管理窗口，查看状态、启停和重启服务、编辑配置或查看错误。构建和计划任务见 [Windows 部署说明](desktop/windows/README.md)，配置见 [Windows 示例](configs/windows.example.yaml)。
+在已登录用户的交互会话中运行 `sshvnc.exe`。默认后端是 LibVNCServer + DXGI。双击托盘图标可打开管理窗口，查看状态、启停和重启服务、编辑配置或查看错误。系统服务安装后，用户登录时自动显示管理托盘，退出托盘后后台服务继续运行；启停和配置操作需要管理员权限。构建、系统服务和计划任务见 [Windows 部署说明](desktop/windows/README.md)，配置见 [Windows 示例](configs/windows.example.yaml)。
 
 ## 连接
 
-在 SuperVNC Viewer 中选择 **SVNC**，填服务器地址、端口 `5922` 和 SSH 用户名（示例为 `vncuser`）。首次连接前核对主机密钥，桌面认证时输入 VNC 密码。文件可从右侧 SFTP 面板传输。[Viewer 使用说明](client/README.md)
+在 JumpVNC Viewer 中选择 **SVNC**，填服务器地址、端口 `5922` 和 SSH 用户名（示例为 `vncuser`）。首次连接前核对主机密钥，桌面认证时输入 VNC 密码。文件可从右侧 SFTP 面板传输。[Viewer 使用说明](client/README.md)
 
 普通 VNC Viewer 可通过 SSH 本地转发接入。运行下面的命令前，先将已核验的服务端 SSH 主机公钥加入 `known_hosts`。
 

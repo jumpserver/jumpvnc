@@ -42,8 +42,8 @@ func (m *Manager) ImportPending() (ImportResult, error) {
 
 func (m *Manager) ImportDialog(ctx context.Context) (ImportResult, error) {
 	paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
-		Parent: mygo.CallerWindow(ctx), Title: "导入 SuperVNC 连接", Multiple: true,
-		Filters: []mygo.FileFilter{{Name: "SuperVNC 连接", Extensions: []string{"svnc"}}},
+		Parent: mygo.CallerWindow(ctx), Title: "导入 JumpVNC 连接", Multiple: true,
+		Filters: []mygo.FileFilter{{Name: "JumpVNC 连接", Extensions: []string{"svnc"}}},
 	})
 	if err != nil {
 		return ImportResult{}, err
@@ -71,8 +71,8 @@ func (m *Manager) ExportServer(ctx context.Context, id string) (bool, error) {
 			return r
 		}, server.Name)
 		filename, err := mygo.Dialog.Save(mygo.SaveDialogOptions{
-			Parent: mygo.CallerWindow(ctx), Title: "导出 SuperVNC 连接", DefaultPath: name + ".svnc",
-			Filters: []mygo.FileFilter{{Name: "SuperVNC 连接", Extensions: []string{"svnc"}}},
+			Parent: mygo.CallerWindow(ctx), Title: "导出 JumpVNC 连接", DefaultPath: name + ".svnc",
+			Filters: []mygo.FileFilter{{Name: "JumpVNC 连接", Extensions: []string{"svnc"}}},
 		})
 		if err != nil || filename == "" {
 			return false, err

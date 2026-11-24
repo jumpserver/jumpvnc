@@ -30,6 +30,39 @@ static unsigned clientCount = 0;
 static DWORD consoleAgentPid = 0;
 static HANDLE sasRequest = nullptr;
 static int originX, originY;
+static bool inputAllowed(rfbClientPtr cl, const char *kind) {
+    const bool active = onActiveDesktop();
+    if (desktopAvailable && !viewOnly && !cl->viewOnly && cl->clientData && active)
+        return true;
+    static ULONGLONG nextLog = 0;
+    if (GetTickCount64() >= nextLog) {
+        nextLog = GetTickCount64() + 2000;
+        wchar_t desktop[256]{};
+        getDesktopName(GetThreadDesktop(GetCurrentThreadId()), desktop);
+        fprintf(stderr, "input.blocked kind=%s available=%d server_view_only=%d client_view_only=%d active=%d desktop=%ls\n",
+                kind, (int)desktopAvailable, (int)viewOnly, (int)cl->viewOnly, (int)active, desktop);
+    }
+    return false;
+}
+static bool injectInput(INPUT &input, const char *kind) {
+    SetLastError(ERROR_SUCCESS);
+    if (SendInput(1, &input, sizeof(input)) == 1) {
+        static unsigned reported = 0;
+        const unsigned bit = input.type == INPUT_MOUSE ? 1 : 2;
+        if (!(reported & bit)) {
+            reported |= bit;
+            fprintf(stderr, "input.inject_ready kind=%s\n", kind);
+        }
+        return true;
+    }
+    const DWORD error = GetLastError();
+    static ULONGLONG nextLog = 0;
+    if (GetTickCount64() >= nextLog) {
+        nextLog = GetTickCount64() + 2000;
+        fprintf(stderr, "input.inject_failed kind=%s win32=%lu\n", kind, error);
+    }
+    return false;
+}
 static void keyInput(WORD key, bool down, bool unicode = false) {
     INPUT i{};
     i.type = INPUT_KEYBOARD;
@@ -39,10 +72,10 @@ static void keyInput(WORD key, bool down, bool unicode = false) {
     if (!unicode && (key == VK_RCONTROL || key == VK_RMENU || (key >= VK_PRIOR && key <= VK_DOWN) ||
                      key == VK_INSERT || key == VK_DELETE || key == VK_LWIN || key == VK_RWIN))
         i.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
-    SendInput(1, &i, sizeof(i));
+    injectInput(i, "keyboard");
 }
 static void keyboard(rfbBool down, rfbKeySym sym, rfbClientPtr cl) {
-    if (!desktopAvailable || viewOnly || cl->viewOnly || !cl->clientData || !onActiveDesktop())
+    if (!inputAllowed(cl, "keyboard"))
         return;
     auto &state = *static_cast<ClientInput *>(cl->clientData);
     WORD vk = 0;
@@ -171,7 +204,7 @@ static void keyboard(rfbBool down, rfbKeySym sym, rfbClientPtr cl) {
     }
 }
 static void pointer(int mask, int x, int y, rfbClientPtr cl) {
-    if (!desktopAvailable || viewOnly || cl->viewOnly || !cl->clientData || !onActiveDesktop() || x < 0 || y < 0 ||
+    if (!inputAllowed(cl, "pointer") || x < 0 || y < 0 ||
         x >= cl->screen->width || y >= cl->screen->height)
         return;
     auto &state = *static_cast<ClientInput *>(cl->clientData);
@@ -183,7 +216,7 @@ static void pointer(int mask, int x, int y, rfbClientPtr cl) {
     i.mi.dx = (LONG)((long long)(x + originX - vx) * 65535 / std::max(1, vw - 1));
     i.mi.dy = (LONG)((long long)(y + originY - vy) * 65535 / std::max(1, vh - 1));
     i.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
-    SendInput(1, &i, sizeof(i));
+    injectInput(i, "pointer");
     const DWORD downs[] = {MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_RIGHTDOWN};
     const DWORD ups[] = {MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_RIGHTUP};
     for (int b = 0; b < 3; b++)
@@ -194,7 +227,7 @@ static void pointer(int mask, int x, int y, rfbClientPtr cl) {
                 i = {};
                 i.type = INPUT_MOUSE;
                 i.mi.dwFlags = down ? downs[b] : ups[b];
-                SendInput(1, &i, sizeof(i));
+                injectInput(i, "button");
             }
         }
     if ((mask & 24) && !(buttons & 24)) {
@@ -202,7 +235,7 @@ static void pointer(int mask, int x, int y, rfbClientPtr cl) {
         i.type = INPUT_MOUSE;
         i.mi.dwFlags = MOUSEEVENTF_WHEEL;
         i.mi.mouseData = (mask & 8) ? WHEEL_DELTA : (DWORD)-WHEEL_DELTA;
-        SendInput(1, &i, sizeof(i));
+        injectInput(i, "wheel");
     }
     state.buttons = mask;
     rfbDefaultPtrAddEvent(mask, x, y, cl);
@@ -226,7 +259,7 @@ static void releaseKeys(rfbClientPtr cl) {
             INPUT i{};
             i.type = INPUT_MOUSE;
             i.mi.dwFlags = ups[b];
-            SendInput(1, &i, sizeof(i));
+            injectInput(i, "button_release");
         }
     state.buttons = 0;
 }
@@ -499,7 +532,7 @@ static BOOL WINAPI control(DWORD) {
     return TRUE;
 }
 static bool openClipboardOwner() {
-    clipboardWindow = CreateWindowExW(0, L"STATIC", L"SuperVNC Clipboard", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr,
+    clipboardWindow = CreateWindowExW(0, L"STATIC", L"JumpVNC Clipboard", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr,
                                       GetModuleHandle(nullptr), nullptr);
     clipboardSequence = GetClipboardSequenceNumber();
     return clipboardWindow != nullptr;
@@ -518,7 +551,10 @@ struct ConsoleDesktop {
         if (desktop && onActiveDesktop())
             return true;
         closeClipboardOwner();
-        HDESK input = OpenInputDesktop(0, FALSE, DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS | DESKTOP_CREATEWINDOW);
+        // SendInput also needs playback access on the thread's desktop. A
+        // read/write-only handle can capture frames but input fails with ERROR_ACCESS_DENIED.
+        HDESK input = OpenInputDesktop(0, FALSE, DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS |
+                                                   DESKTOP_CREATEWINDOW | DESKTOP_JOURNALPLAYBACK);
         wchar_t name[256]{};
         if (!getDesktopName(input, name) || !SetThreadDesktop(input)) {
             if (input)
@@ -595,7 +631,7 @@ int wmain(int argc, wchar_t **argv) {
     std::vector<char> pixels((size_t)width * height * 4);
     s->frameBuffer = pixels.data();
     serverFormat(s);
-    s->desktopName = "SuperVNC Server / LibVNCServer / Windows DXGI";
+    s->desktopName = "JumpVNC Server / LibVNCServer / Windows DXGI";
     s->listenInterface = htonl(INADDR_LOOPBACK);
     s->port = options.port;
     s->autoPort = FALSE;

@@ -505,7 +505,7 @@ int main(int argc, char **argv) {
     std::vector<char> pixels(static_cast<size_t>(width) * height * 4);
     screen->frameBuffer = pixels.data();
     serverFormat(screen);
-    screen->desktopName = "SuperVNC Server / LibVNCServer / Linux X11";
+    screen->desktopName = "JumpVNC Server / LibVNCServer / Linux X11";
     screen->listenInterface = htonl(INADDR_LOOPBACK);
     screen->port = opts.port;
     screen->autoPort = FALSE;

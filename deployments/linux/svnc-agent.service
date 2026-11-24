@@ -1,5 +1,5 @@
 [Unit]
-Description=SuperVNC Server SSH SFTP and LibVNCServer agent
+Description=JumpVNC Server SSH SFTP and LibVNCServer agent
 Requires=svnc-desktop-session.service
 After=svnc-desktop-session.service
 

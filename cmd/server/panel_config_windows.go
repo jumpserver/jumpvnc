@@ -33,7 +33,13 @@ func (t *windowsTray) refreshPanelSettings(keepDraft bool) {
 	p := &t.panel
 	current := controlText(p.rootInput)
 	keepDraft = keepDraft && p.rootEnabled && current != p.savedRoot
-	cfg, err := config.ReadSettings(t.configPath)
+	var cfg config.Config
+	var err error
+	if t.canConfigure() {
+		cfg, err = config.ReadSettings(t.configPath)
+	} else {
+		err = errors.New("需要管理员权限")
+	}
 	if err != nil {
 		t.setPanelPasswordFile("")
 		p.rootEnabled = false
@@ -44,7 +50,12 @@ func (t *windowsTray) refreshPanelSettings(keepDraft bool) {
 		setControlText(p.compatibility, "")
 		setControlText(p.rootLabel, "根目录")
 		setControlText(p.rootDirectory, "")
-		setControlText(p.rootHint, "请打开 YAML 配置检查文件内容。")
+		hint := "请打开 YAML 配置检查文件内容。"
+		if !t.canConfigure() {
+			hint = "以管理员身份管理后，可查看和修改配置。"
+		}
+		setControlText(p.rootHint, hint)
+		setControlText(p.passwordHint, hint)
 	} else {
 		t.setPanelPasswordFile(desktopPasswordFile(t.configPath, cfg))
 		setControlText(p.ssh, "SSH 监听："+cfg.SSH.Listen)
@@ -55,7 +66,7 @@ func (t *windowsTray) refreshPanelSettings(keepDraft bool) {
 		}
 		setControlText(p.vnc, "VNC 后端："+backend)
 		compatibility := "关闭"
-		p.compatibilityAllowed = cfg.SSH.AllowVNC
+		p.compatibilityAllowed = cfg.SSH.AllowVNC && t.registration == nil
 		p.compatibilityEnabled = cfg.VNC.Compatibility.Enabled
 		toggle := "开启兼容"
 		if p.compatibilityEnabled {
@@ -64,7 +75,10 @@ func (t *windowsTray) refreshPanelSettings(keepDraft bool) {
 		}
 		setControlText(p.compatibility, "VNC 兼容入口："+compatibility)
 		setControlText(p.compatibilityToggle, toggle)
-		p.rootEnabled = cfg.SFTP.Mode != "disabled"
+		if t.registration != nil {
+			setControlText(p.compatibility, "VNC 兼容入口：系统服务模式关闭此入口")
+		}
+		p.rootEnabled = cfg.SFTP.Mode != "disabled" && t.registration == nil
 		setControlText(p.rootLabel, "根目录  ·  "+sftpModeLabel(cfg.SFTP.Mode))
 		p.savedRoot = cfg.SFTP.Root
 		if p.savedRoot == "" {
@@ -83,6 +97,9 @@ func (t *windowsTray) refreshPanelSettings(keepDraft bool) {
 			}
 		} else {
 			hint = "SFTP 已关闭，可在 YAML 配置中启用。"
+			if t.registration != nil {
+				hint = "系统服务模式关闭 SFTP。"
+			}
 		}
 		setControlText(p.rootHint, hint)
 	}
@@ -192,7 +209,7 @@ func updateProtectedFile(name string, edit func([]byte) ([]byte, error)) error {
 	if err != nil {
 		return err
 	}
-	stage, err := os.CreateTemp(filepath.Dir(target), ".supervnc-config-*")
+	stage, err := os.CreateTemp(filepath.Dir(target), ".jumpvnc-config-*")
 	if err != nil {
 		return err
 	}

@@ -15,6 +15,7 @@ import (
 	"sshvnc/internal/vnc"
 )
 
+// Keep the SCM identity so existing Windows service installations can be upgraded.
 const windowsServiceName = "SuperVNC"
 
 func runWindowsService(ctx context.Context, name string) error {

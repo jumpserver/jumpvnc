@@ -16,7 +16,7 @@ import (
 	"sshvnc/internal/vnc"
 )
 
-const productName = "SuperVNC Server"
+const productName = "JumpVNC Server"
 
 func main() {
 	flag.Usage = func() {
@@ -26,14 +26,20 @@ func main() {
 	name := flag.String("config", "config.yaml", "path to the YAML configuration")
 	noTray := flag.Bool("no-tray", false, "run in the foreground without a notification area icon (Windows)")
 	service := flag.Bool("service", false, "run under the Windows Service Control Manager")
+	manageService := flag.Bool("manage-service", false, "show the tray for the installed Windows service")
+	openPanel := flag.Bool("open-panel", false, "open the Windows service management window")
 	flag.Parse()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil)).With("product", productName)
 	var err error
-	if *service {
+	if (*service && (*manageService || *openPanel || *noTray)) || (*noTray && (*manageService || *openPanel)) {
+		err = fmt.Errorf("service, service management, and foreground modes cannot be combined")
+	} else if *service {
 		err = runWindowsService(ctx, *name)
+	} else if *manageService || *openPanel {
+		err = runServiceManager(ctx, *openPanel, log)
 	} else {
 		err = runAgent(ctx, *name, *noTray, log)
 	}

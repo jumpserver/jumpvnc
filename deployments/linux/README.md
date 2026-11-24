@@ -42,7 +42,7 @@ Plasma 使用此服务的私有 D-Bus 会话；可通过 `runuser -u svnc -- kwr
 
 `alivnc` 的专用测试账户未设置系统登录密码，Plasma 测试会话已将 `kscreenlockerrc` 的 `Daemon/Autolock` 和 `Daemon/LockOnResume` 设为 false。此设置不改变 Agent 的 SSH 公钥及 VNC 密码认证。
 
-Xvfb 只使用 Unix socket 和私有 Xauthority，VNC 只监听 `127.0.0.1:5900`。保留系统 SSH 作为跳板即可，无需在公网开放 5922/5900。在 SuperVNC Viewer 中使用 Agent `127.0.0.1:5922`、SSH 用户 `vncuser`、桌面连接方式 SVNC，并填写系统 SSH 跳板、Agent 私钥及可信主机公钥。
+Xvfb 只使用 Unix socket 和私有 Xauthority，VNC 只监听 `127.0.0.1:5900`。保留系统 SSH 作为跳板即可，无需在公网开放 5922/5900。在 JumpVNC Viewer 中使用 Agent `127.0.0.1:5922`、SSH 用户 `vncuser`、桌面连接方式 SVNC，并填写系统 SSH 跳板、Agent 私钥及可信主机公钥。
 
 停止测试环境用 `systemctl stop svnc-agent svnc-desktop-session`；重新启动用 `systemctl start svnc-desktop-session svnc-agent`。重启桌面会终止该虚拟会话中的应用；仅重启 svnc-agent 会中断远程连接并保留桌面应用。
 

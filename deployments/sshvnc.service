@@ -1,5 +1,5 @@
 [Unit]
-Description=SuperVNC Server gateway for the current X11 desktop
+Description=JumpVNC Server gateway for the current X11 desktop
 PartOf=graphical-session.target
 
 [Service]

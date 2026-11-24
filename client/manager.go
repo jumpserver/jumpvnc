@@ -19,7 +19,7 @@ type Manager struct {
 
 func (m *Manager) showWindow() {
 	m.window = mygo.NewWindow(mygo.WindowOptions{
-		Title: "SuperVNC · 连接管理", URL: "/", Width: 1180, Height: 780,
+		Title: "JumpVNC · 连接管理", URL: "/", Width: 1180, Height: 780,
 		MinWidth: 880, MinHeight: 580,
 		TitleBarStyle: mygo.TitleBarHidden, TitleBarHeight: 48,
 		TrafficLightPosition: &mygo.Point{X: 18, Y: 17},

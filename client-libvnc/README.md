@@ -1,6 +1,6 @@
 # LibVNCClient 原生对照客户端
 
-macOS 上使用 LibVNCClient 0.9.15、SDL2 和 libjpeg-turbo 的实验客户端，连接 g15 的 LibVNCServer/DXGI 测试后端。不是完整的 svnc 客户端，没有 SFTP 和剪贴板集成。
+macOS 上使用 LibVNCClient 0.9.15、SDL2 和 libjpeg-turbo 的实验客户端，连接 g15 的 LibVNCServer/DXGI 测试后端。不是完整的 JumpVNC Viewer 客户端，没有 SFTP 和剪贴板集成。
 
 ## 运行
 

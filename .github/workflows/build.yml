@@ -1,4 +1,4 @@
-name: Build SuperVNC
+name: Build JumpVNC
 
 on:
   push:
@@ -64,20 +64,20 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
         run: |
-          package="supervnc-server-linux-$ARCH"
+          package="jumpvnc-server-linux-$ARCH"
           mkdir -p "dist/$package/bin" "dist/$package/sources"
           cp bin/sshvnc "dist/$package/bin/"
           cmake --install build/linux --prefix "$PWD/dist/$package"
           cp -R configs deployments docs "dist/$package/"
           cp README.md "dist/$package/"
           cp desktop/linux/README.md "dist/$package/BACKEND.md"
-          git archive --format=tar.gz --output="$PWD/dist/$package/sources/supervnc.tar.gz" HEAD
+          git archive --format=tar.gz --output="$PWD/dist/$package/sources/jumpvnc.tar.gz" HEAD
           tar -C dist -czf "dist/$package.tar.gz" "$package"
           cd dist
           sha256sum "$package.tar.gz" > "$package.tar.gz.sha256"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: supervnc-server-linux-${{ matrix.arch }}
+          name: jumpvnc-server-linux-${{ matrix.arch }}
           path: |
             dist/*.tar.gz
             dist/*.sha256
@@ -117,7 +117,7 @@ jobs:
       - name: Package Windows server with matching sources and licenses
         shell: pwsh
         run: |
-          $package = 'supervnc-server-windows-amd64'
+          $package = 'jumpvnc-server-windows-amd64'
           $root = Join-Path $PWD "dist/$package"
           New-Item -ItemType Directory -Force "$root/bin", "$root/backends/windows", "$root/sources", "$root/licenses" | Out-Null
           Copy-Item bin/sshvnc.exe "$root/bin/"
@@ -128,8 +128,8 @@ jobs:
           Copy-Item desktop/windows/COPYING "$root/licenses/LibVNCServer-COPYING"
           Copy-Item desktop/windows/jpeg/LICENSE.md "$root/licenses/libjpeg-turbo-LICENSE.md"
           Copy-Item desktop/windows/zlib/LICENSE "$root/licenses/zlib-LICENSE"
-          git archive --format=tar.gz --output="$root/sources/supervnc.tar.gz" HEAD
-          if ($LASTEXITCODE -ne 0) { throw 'Cannot archive SuperVNC sources' }
+          git archive --format=tar.gz --output="$root/sources/jumpvnc.tar.gz" HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot archive JumpVNC sources' }
           foreach ($dependency in @('libvncserver', 'jpeg', 'zlib')) {
             git -C "desktop/windows/$dependency" archive --format=tar.gz --output="$root/sources/$dependency.tar.gz" HEAD
             if ($LASTEXITCODE -ne 0) { throw "Cannot archive $dependency sources" }
@@ -139,7 +139,7 @@ jobs:
           "$hash  $package.zip" | Set-Content "dist/$package.zip.sha256" -Encoding ascii
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: supervnc-server-windows-amd64
+          name: jumpvnc-server-windows-amd64
           path: |
             dist/*.zip
             dist/*.sha256
@@ -177,19 +177,19 @@ jobs:
         run: go tool mygo build -platform darwin/universal -skip-dmg
       - name: Verify and package app
         run: |
-          app=build/darwin-universal/SuperVNC.app
+          app=build/darwin-universal/JumpVNC.app
           codesign --verify --deep --strict "$app"
-          lipo "$app/Contents/MacOS/SuperVNC" -verify_arch arm64 x86_64
-          mkdir -p ../dist/supervnc-viewer-macos-universal/sources
-          cp -R "$app" ../dist/supervnc-viewer-macos-universal/
-          cp README.md ../dist/supervnc-viewer-macos-universal/
-          git archive --format=tar.gz --output="$PWD/../dist/supervnc-viewer-macos-universal/sources/supervnc.tar.gz" HEAD
+          lipo "$app/Contents/MacOS/JumpVNC" -verify_arch arm64 x86_64
+          mkdir -p ../dist/jumpvnc-viewer-macos-universal/sources
+          cp -R "$app" ../dist/jumpvnc-viewer-macos-universal/
+          cp README.md ../dist/jumpvnc-viewer-macos-universal/
+          git archive --format=tar.gz --output="$PWD/../dist/jumpvnc-viewer-macos-universal/sources/jumpvnc.tar.gz" HEAD
           cd ../dist
-          ditto -c -k --sequesterRsrc --keepParent supervnc-viewer-macos-universal supervnc-viewer-macos-universal.zip
-          shasum -a 256 supervnc-viewer-macos-universal.zip > supervnc-viewer-macos-universal.zip.sha256
+          ditto -c -k --sequesterRsrc --keepParent jumpvnc-viewer-macos-universal jumpvnc-viewer-macos-universal.zip
+          shasum -a 256 jumpvnc-viewer-macos-universal.zip > jumpvnc-viewer-macos-universal.zip.sha256
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: supervnc-viewer-macos-universal
+          name: jumpvnc-viewer-macos-universal
           path: |
             dist/*.zip
             dist/*.sha256

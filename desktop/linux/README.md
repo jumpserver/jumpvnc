@@ -1,4 +1,4 @@
-# SuperVNC Server Linux X11 桌面后端
+# JumpVNC Server Linux X11 桌面后端
 
 `svnc-desktop` 使用 LibVNCServer 编码和提供 RFB 服务，Xlib 读取当前 X11 桌面，XTEST 注入键鼠，XFIXES 获取光标和剪贴板变化。Go Agent 仍负责 SSH、公钥授权、审计、SFTP 和后端生命周期。
 

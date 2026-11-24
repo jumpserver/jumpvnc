@@ -1,6 +1,6 @@
-# SuperVNC Viewer 桌面客户端
+# JumpVNC Viewer 桌面客户端
 
-SuperVNC Viewer 是 SuperVNC 的桌面客户端，实现 [SVNC 接入协议](../docs/protocol.md)，同时支持普通 VNC。SuperVNC 是产品名，SVNC 是协议名，连接表单中的 SVNC / VNC 表示不同接入方式。构建产物为 `SuperVNC.app`，已有配置目录、应用标识、钥匙串标识和 `.svnc` 连接文件继续沿用，改名后仍可读取原有连接与凭据。
+JumpVNC Viewer 是 JumpVNC 的桌面客户端，实现 [SVNC 接入协议](../docs/protocol.md)，同时支持普通 VNC。JumpVNC 是产品名，SVNC 是协议名，连接表单中的 SVNC / VNC 表示不同接入方式。构建产物为 `JumpVNC.app`，已有配置目录、应用标识、钥匙串标识和 `.svnc` 连接文件继续沿用，改名后仍可读取原有连接与凭据。
 
 macOS 客户端使用 MyGo 窗口和 noVNC 画布。启动后先进入连接管理页；每个连接在独立桌面窗口中打开。Go 连接 SSH Agent，随后在同一连接中打开 `vnc` subsystem，并尝试打开 SFTP 会话；SFTP 被禁用或不可用时仍可使用桌面。应用仅给内置的 VNC 画布建立临时回环 WebSocket。文件管理默认隐藏，点击标题栏的“文件管理”后展开远程文件；服务端默认以运行账户 HOME 为根目录。
 
@@ -16,7 +16,7 @@ go tool mygo build -skip-dmg
 
 应用图标源文件为 `resources/icon.png`，由 MyGo 构建为 macOS `.icns` 并写入应用包，供 Finder 和 Dock 显示。
 
-在 Apple Silicon Mac 上，打开 `client/build/darwin-arm64/SuperVNC.app`。也可用 `go tool mygo build -platform darwin/universal -skip-dmg` 构建通用版本。
+在 Apple Silicon Mac 上，打开 `client/build/darwin-arm64/JumpVNC.app`。也可用 `go tool mygo build -platform darwin/universal -skip-dmg` 构建通用版本。
 
 ## 连接管理
 
@@ -33,7 +33,7 @@ go tool mygo build -skip-dmg
 
 连接配置文件统一使用 `.svnc` 扩展名，格式为 UTF-8 JSON，见 [文件格式规范](../docs/connection-file.md) 和 [示例文件](../configs/example.svnc)。双击文件可启动或激活客户端并导入连接列表，导入后由用户点击连接。也可点击管理页工具栏的“导入 .svnc 连接”按钮；单个连接通过卡片的“更多操作 → 导出 .svnc”分享。
 
-重复配置会跳过，同名但设置不同会新增，导入的连接归入“未分类”。文件不包含密码、私钥、本机路径、钥匙串引用或主机信任状态，导入不会覆盖已有连接的凭据。macOS 需使用重新构建的应用包以包含文件关联；系统默认打开程序未更新时，可通过“打开方式”选择 SuperVNC。
+重复配置会跳过，同名但设置不同会新增，导入的连接归入“未分类”。文件不包含密码、私钥、本机路径、钥匙串引用或主机信任状态，导入不会覆盖已有连接的凭据。macOS 需使用重新构建的应用包以包含文件关联；系统默认打开程序未更新时，可通过“打开方式”选择 JumpVNC。
 
 ## 连接和传输
 

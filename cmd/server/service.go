@@ -13,7 +13,22 @@ const (
 	serviceRunning
 	serviceStopping
 	serviceRestarting
+	serviceUnavailable
 )
+
+type trayController interface {
+	canStart() bool
+	canStop() bool
+	start()
+	stop(restart bool)
+	update()
+	close()
+	currentState() serviceState
+	currentError() error
+}
+
+func (s *trayService) currentState() serviceState { return s.state }
+func (s *trayService) currentError() error        { return s.lastErr }
 
 type serviceEvent struct {
 	ready bool

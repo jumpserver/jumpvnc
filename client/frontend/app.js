@@ -678,8 +678,8 @@ async function init() {
     const server = await call('Defaults');
     const profile = server.profile;
     serverName = server.name;
-    document.title = serverName + ' · SuperVNC';
-    $('connection-name').textContent = serverName || profile.jump || profile.host || 'SuperVNC';
+    document.title = serverName + ' · JumpVNC';
+    $('connection-name').textContent = serverName || profile.jump || profile.host || 'JumpVNC';
     setProfile(form, profile);
     profileReady = true;
     $('stored-row').hidden = !profile.storedPassword;

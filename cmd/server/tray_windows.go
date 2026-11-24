@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -45,6 +47,7 @@ const (
 	tpmReturnCommand  = 0x0100
 	trayIconID        = 1
 	iconRetryTimer    = 1
+	servicePollTimer  = 2
 )
 
 const (
@@ -55,6 +58,7 @@ const (
 	menuConfig
 	menuError
 	menuQuit
+	menuAdmin
 )
 
 var (
@@ -131,7 +135,8 @@ type stockIconInfo struct {
 
 type windowsTray struct {
 	configPath     string
-	service        *trayService
+	service        trayController
+	registration   *serviceRegistration
 	panel          managementWindow
 	instance       uintptr
 	window         uintptr
@@ -146,14 +151,58 @@ func runAgent(ctx context.Context, name string, noTray bool, log *slog.Logger) e
 	if noTray || !interactiveDesktop() {
 		return run(ctx, name, log, nil)
 	}
-	name, err := filepath.Abs(name)
+	registration, err := installedServiceRegistration()
+	if err == nil {
+		return runWindowsTray(ctx, registration.configPath, &registration, false, log)
+	}
+	if !errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
+		return fmt.Errorf("read installed service: %w", err)
+	}
+	name, err = filepath.Abs(name)
 	if err != nil {
 		return fmt.Errorf("resolve configuration path: %w", err)
 	}
+	return runWindowsTray(ctx, name, nil, false, log)
+}
+
+func runServiceManager(ctx context.Context, openPanel bool, log *slog.Logger) error {
+	if !interactiveDesktop() {
+		return errors.New("service tray requires a logged-in Windows desktop")
+	}
+	registration, err := installedServiceRegistration()
+	if err != nil {
+		return fmt.Errorf("read installed service: %w", err)
+	}
+	return runWindowsTray(ctx, registration.configPath, &registration, openPanel, log)
+}
+
+func runWindowsTray(ctx context.Context, name string, registration *serviceRegistration, openPanel bool, log *slog.Logger) error {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
-	tray := windowsTray{configPath: name}
+	kernel32.NewProc("FreeConsole").Call()
+	tray := windowsTray{configPath: name, registration: registration}
+	if registration != nil {
+		mutex, err := windows.CreateMutex(nil, false, windows.StringToUTF16Ptr(`Local\`+tray.windowClassName()))
+		if mutex != 0 {
+			defer windows.CloseHandle(mutex)
+		}
+		if errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
+			if openPanel {
+				hwnd, _, _ := user32.NewProc("FindWindowW").Call(uintptr(unsafe.Pointer(windows.StringToUTF16Ptr(tray.windowClassName()))), 0)
+				if hwnd != 0 {
+					postMessage.Call(hwnd, wmTrayIcon, 0, wmLeftDoubleClick)
+				}
+			}
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
 	if err := tray.createWindow(); err != nil {
+		if registration != nil {
+			return err
+		}
 		log.Warn("tray.unavailable", "error", err)
 		return run(ctx, name, log, nil)
 	}
@@ -173,13 +222,20 @@ func runAgent(ctx context.Context, name string, noTray bool, log *slog.Logger) e
 		}
 	}()
 
-	tray.service = newTrayService(ctx, func(ctx context.Context, ready func()) error {
-		err := run(ctx, name, log, ready)
-		if err != nil && ctx.Err() == nil {
-			log.Error("agent.error", "error", err)
-		}
-		return err
-	}, func() { postMessage.Call(tray.window, wmServiceUpdate, 0, 0) })
+	notify := func() { postMessage.Call(tray.window, wmServiceUpdate, 0, 0) }
+	if registration != nil {
+		tray.service = newManagedService(ctx, windowsServiceBackend{}, notify)
+		setTimer.Call(tray.window, servicePollTimer, 1000, 0)
+		defer killTimer.Call(tray.window, servicePollTimer)
+	} else {
+		tray.service = newTrayService(ctx, func(ctx context.Context, ready func()) error {
+			err := run(ctx, name, log, ready)
+			if err != nil && ctx.Err() == nil {
+				log.Error("agent.error", "error", err)
+			}
+			return err
+		}, notify)
+	}
 	defer tray.service.close()
 	posted := make(chan struct{})
 	stop := context.AfterFunc(ctx, func() {
@@ -192,8 +248,13 @@ func runAgent(ctx context.Context, name string, noTray bool, log *slog.Logger) e
 		}
 	}()
 
-	tray.service.start()
+	if registration == nil {
+		tray.service.start()
+	}
 	tray.refreshIcon()
+	if openPanel {
+		tray.openPanel()
+	}
 	var msg windowMessage
 	for {
 		result, _, err := getMessage.Call(uintptr(unsafe.Pointer(&msg)), 0, 0, 0)
@@ -232,7 +293,7 @@ func (t *windowsTray) createWindow() error {
 	}
 	t.instance = uintptr(instance)
 	class := windowClass{
-		instance: t.instance, className: windows.StringToUTF16Ptr("SuperVNC.Server.Tray"),
+		instance: t.instance, className: windows.StringToUTF16Ptr(t.windowClassName()),
 		callback: windows.NewCallback(t.windowProc),
 	}
 	class.size = uint32(unsafe.Sizeof(class))
@@ -285,6 +346,11 @@ func (t *windowsTray) windowProc(hwnd uintptr, message uint32, wParam, lParam ui
 		}
 		return 0
 	case wmTimer:
+		if wParam == servicePollTimer && !t.closing {
+			t.service.update()
+			t.refreshStatus()
+			return 0
+		}
 		if wParam == iconRetryTimer && !t.closing {
 			t.refreshIcon()
 		}
@@ -339,7 +405,9 @@ func (t *windowsTray) refreshIcon() {
 }
 
 func (t *windowsTray) status() string {
-	switch t.service.state {
+	switch t.service.currentState() {
+	case serviceUnavailable:
+		return "无法读取服务状态"
 	case serviceStarting:
 		return "正在启动"
 	case serviceRunning:
@@ -349,7 +417,7 @@ func (t *windowsTray) status() string {
 	case serviceRestarting:
 		return "正在重启"
 	default:
-		if t.service.lastErr != nil {
+		if t.service.currentError() != nil {
 			return "已停止（服务出错）"
 		}
 		return "已停止"
@@ -377,15 +445,24 @@ func (t *windowsTray) showMenu(x, y int32) {
 	appendMenu.Call(menu, mfSeparator, 0, 0)
 	add(menuOpen, "打开管理窗口", true)
 	appendMenu.Call(menu, mfSeparator, 0, 0)
-	add(menuStart, "启动服务", t.service.canStart())
-	add(menuStop, "停止服务", t.service.canStop())
-	add(menuRestart, "重启服务", t.service.canStop())
-	add(menuConfig, "编辑配置", true)
-	if t.service.lastErr != nil {
+	add(menuStart, "启动服务", t.canConfigure() && t.service.canStart())
+	add(menuStop, "停止服务", t.canConfigure() && t.service.canStop())
+	add(menuRestart, "重启服务", t.canConfigure() && t.service.canStop())
+	add(menuConfig, "编辑配置", t.canConfigure())
+	if t.registration != nil && !t.canConfigure() {
+		add(menuAdmin, "以管理员身份管理", true)
+	}
+	if t.service.currentError() != nil {
 		add(menuError, "查看错误", true)
+	} else if t.registration != nil {
+		add(menuError, "查看服务日志", t.canConfigure())
 	}
 	appendMenu.Call(menu, mfSeparator, 0, 0)
-	add(menuQuit, "退出 SuperVNC", true)
+	quitLabel := "退出 JumpVNC"
+	if t.registration != nil {
+		quitLabel = "退出托盘（服务继续运行）"
+	}
+	add(menuQuit, quitLabel, true)
 	setForegroundWindow.Call(t.window)
 	command, _, _ := trackPopupMenu.Call(menu, tpmRightButton|tpmReturnCommand, uintptr(x), uintptr(y), 0, t.window, 0)
 	// Explorer needs a queued message after the popup to release menu tracking.
@@ -401,7 +478,21 @@ func (t *windowsTray) showMenu(x, y int32) {
 }
 
 func (t *windowsTray) handleCommand(command, owner uintptr) {
+	if !t.canConfigure() && (command == menuStart || command == menuStop || command == menuRestart || command == menuConfig) {
+		return
+	}
 	switch command {
+	case menuAdmin:
+		executable, err := os.Executable()
+		if err == nil {
+			err = windows.ShellExecute(windows.Handle(owner), windows.StringToUTF16Ptr("runas"), windows.StringToUTF16Ptr(executable), windows.StringToUTF16Ptr("-manage-service -open-panel"), nil, windows.SW_HIDE)
+		}
+		if err != nil {
+			showTrayError(owner, "无法打开管理员管理窗口", err)
+		} else {
+			t.quit()
+		}
+		return
 	case menuOpen:
 		t.openPanel()
 		return
@@ -415,8 +506,12 @@ func (t *windowsTray) handleCommand(command, owner uintptr) {
 		}
 		return
 	case menuError:
-		if t.service.lastErr != nil {
-			showTrayError(owner, "服务出错", t.service.lastErr)
+		if t.service.currentError() != nil {
+			showTrayError(owner, "服务出错", t.service.currentError())
+		} else if t.registration != nil && t.canConfigure() {
+			if err := t.openTextFile(owner, t.configPath+".service.log"); err != nil {
+				showTrayError(owner, "无法查看日志", err)
+			}
 		}
 		return
 	case menuQuit:
@@ -428,14 +523,32 @@ func (t *windowsTray) handleCommand(command, owner uintptr) {
 	t.refreshStatus()
 }
 
-func (t *windowsTray) editConfig(owner uintptr) error {
+func (t *windowsTray) canConfigure() bool {
+	return t.registration == nil || windows.GetCurrentProcessToken().IsElevated()
+}
+
+func (t *windowsTray) windowClassName() string {
+	name := "JumpVNC.Server.Tray"
+	if t.registration != nil {
+		user, err := windows.GetCurrentProcessToken().GetTokenUser()
+		if err == nil {
+			name += "." + user.User.Sid.String()
+		}
+		name += fmt.Sprintf(".ServiceManager.%t", windows.GetCurrentProcessToken().IsElevated())
+	}
+	return name
+}
+
+func (t *windowsTray) editConfig(owner uintptr) error { return t.openTextFile(owner, t.configPath) }
+
+func (t *windowsTray) openTextFile(owner uintptr, name string) error {
 	systemDir, err := windows.GetSystemDirectory()
 	if err != nil {
 		return err
 	}
 	return windows.ShellExecute(windows.Handle(owner), windows.StringToUTF16Ptr("open"),
 		windows.StringToUTF16Ptr(filepath.Join(systemDir, "notepad.exe")),
-		windows.StringToUTF16Ptr(windows.ComposeCommandLine([]string{t.configPath})), nil, windows.SW_SHOWNORMAL)
+		windows.StringToUTF16Ptr(windows.ComposeCommandLine([]string{name})), nil, windows.SW_SHOWNORMAL)
 }
 
 func showTrayError(owner uintptr, title string, err error) {

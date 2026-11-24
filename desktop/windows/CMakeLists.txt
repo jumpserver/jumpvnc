@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 project(svnc_desktop LANGUAGES C CXX)
 if(NOT WIN32)
-  message(FATAL_ERROR "The SuperVNC desktop backend requires Windows")
+  message(FATAL_ERROR "The JumpVNC desktop backend requires Windows")
 endif()
 set(CMAKE_CXX_STANDARD 17)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)

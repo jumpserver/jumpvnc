@@ -181,7 +181,7 @@ func (d *Desktop) fileSession() (*session, error) {
 
 func main() {
 	mygo.Theme.SetSource(mygo.ThemeLight)
-	// Keep connection profiles and window state across the SuperVNC display rename.
+	// Keep connection profiles and window state across the JumpVNC display rename.
 	dataDir, err := mygo.App.Path(mygo.PathAppData)
 	if err != nil {
 		log.Fatal(err)
