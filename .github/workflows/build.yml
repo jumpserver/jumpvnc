@@ -236,7 +236,7 @@ jobs:
           WEBKIT_DISABLE_DMABUF_RENDERER: '1'
         run: |
           dbus-run-session -- xvfb-run -a bash -euo pipefail <<'SH'
-          build/linux-$ARCH/sshvnc-desktop >build/viewer-smoke.log 2>&1 &
+          build/linux-$ARCH/jumpvnc-viewer >build/viewer-smoke.log 2>&1 &
           viewer=$!
           trap 'kill "$viewer" 2>/dev/null || true' EXIT
           if ! timeout 30 xdotool search --sync --onlyvisible --name 'JumpVNC · 连接管理'; then

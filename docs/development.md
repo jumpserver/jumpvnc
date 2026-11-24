@@ -90,7 +90,7 @@ go vet ./...
 CI 在完成后端构建及打包后执行：
 
 ```powershell
-.\deployments\windows\installer\build.ps1 -Version 0.1.0
+.\deployments\windows\installer\build.ps1 -Version 0.1.2
 .\deployments\windows\installer\test.ps1 -Installer .\dist\jumpvnc-server-windows-amd64-setup.exe
 ```
 
