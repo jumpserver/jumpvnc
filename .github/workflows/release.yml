@@ -1,0 +1,110 @@
+name: Publish JumpVNC release
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: Successful Build JumpVNC run on main
+        required: true
+        type: string
+      tag:
+        description: Existing draft release tag (for example v0.1.0)
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BUILD_RUN_ID: ${{ inputs.build_run_id }}
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - name: Validate the successful build and draft release
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, re
+          assert re.fullmatch(r'[0-9]+', os.environ['BUILD_RUN_ID']), 'Invalid build run ID'
+          assert re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?', os.environ['RELEASE_TAG']), 'Invalid release tag'
+          PY
+          gh run view "$BUILD_RUN_ID" --repo "$GITHUB_REPOSITORY" --json status,conclusion,headSha,headBranch,workflowName,event > build.json
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,tagName,targetCommitish > release.json
+          python3 - <<'PY'
+          import json, os
+          build = json.load(open('build.json'))
+          release = json.load(open('release.json'))
+          assert build['status'] == 'completed' and build['conclusion'] == 'success', 'Build must pass before publishing'
+          assert build['workflowName'] == 'Build JumpVNC' and build['headBranch'] == 'main', 'Only the main build can be released'
+          assert build['event'] in ('push', 'workflow_dispatch'), 'Pull request builds cannot be released'
+          assert release['isDraft'] and release['tagName'] == os.environ['RELEASE_TAG'], 'An existing draft release is required'
+          assert release['targetCommitish'] == build['headSha'], 'Draft must target the exact verified build commit'
+          print('Verified build commit:', build['headSha'])
+          PY
+      - name: Download the verified build artifacts
+        run: gh run download "$BUILD_RUN_ID" --repo "$GITHUB_REPOSITORY" --dir artifacts
+      - name: Verify checksums, licenses and corresponding source commits
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, io, json, pathlib, re, shutil, tarfile, zipfile
+          commit = json.load(open('build.json'))['headSha']
+          names = ['jumpvnc-viewer-macos-universal.zip', 'jumpvnc-server-linux-amd64.tar.gz',
+                   'jumpvnc-server-linux-arm64.tar.gz', 'jumpvnc-server-windows-amd64.zip',
+                   'jumpvnc-server-windows-amd64-setup.exe']
+          output = pathlib.Path('release-files')
+          output.mkdir()
+          for name in names:
+              matches = list(pathlib.Path('artifacts').rglob(name))
+              assert len(matches) == 1, f'Missing or duplicate asset: {name}'
+              path = matches[0]
+              checksum = path.with_name(name + '.sha256')
+              fields = checksum.read_text().split()
+              assert len(fields) == 2 and fields[1] == name and re.fullmatch('[0-9a-fA-F]{64}', fields[0]), f'Invalid checksum file: {name}'
+              with path.open('rb') as source:
+                  digest = hashlib.file_digest(source, 'sha256').hexdigest()
+              assert digest == fields[0].lower(), f'Checksum mismatch: {name}'
+              if name.endswith('.zip'):
+                  with zipfile.ZipFile(path) as archive:
+                      members = archive.namelist()
+                      assert any(p.endswith('/LICENSE') and '/sources/' not in p for p in members), f'Missing GPL license: {name}'
+                      sources = [p for p in members if p.endswith('/sources/jumpvnc.tar.gz')]
+                      assert len(sources) == 1, f'Missing corresponding source: {name}'
+                      data = archive.read(sources[0])
+              elif name.endswith('.tar.gz'):
+                  with tarfile.open(path, 'r:gz') as archive:
+                      members = archive.getnames()
+                      assert any(p.endswith('/LICENSE') and '/sources/' not in p for p in members), f'Missing GPL license: {name}'
+                      sources = [p for p in members if p.endswith('/sources/jumpvnc.tar.gz')]
+                      assert len(sources) == 1, f'Missing corresponding source: {name}'
+                      data = archive.extractfile(sources[0]).read()
+              else:
+                  data = None
+              if data is not None:
+                  with tarfile.open(fileobj=io.BytesIO(data), mode='r:gz') as source:
+                      assert source.pax_headers.get('comment') == commit, f'Source commit mismatch: {name}'
+                      license_text = source.extractfile('LICENSE').read()
+                      assert b'Version 3, 29 June 2007' in license_text, 'Incorrect project license'
+              shutil.copy2(path, output / name)
+              shutil.copy2(checksum, output / checksum.name)
+              print(digest, name)
+          PY
+      - name: Upload all assets and publish the draft
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = true
+          gh release upload "$RELEASE_TAG" release-files/* --repo "$GITHUB_REPOSITORY" --clobber
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json url --jq .url
