@@ -3,6 +3,8 @@
 // Encoding selection adapter for the pinned noVNC 1.7.0. Keep its capability
 // checks and pseudo encodings; advertise H.264 only in the explicit video mode.
 // The corresponding noVNC implementation is MPL-2.0 (bundled with the app).
+import { captureStatusEncoding } from './rfb-performance.js';
+
 export function videoRFB(BaseRFB, encodings, supportsH264) {
   return class VideoRFB extends BaseRFB {
     get preferVideo() { return this._preferVideo || false; }
@@ -21,7 +23,7 @@ export function videoRFB(BaseRFB, encodings, supportsH264) {
       const e = encodings;
       const list = [e.encodingCopyRect];
       if (this._fbDepth === 24) {
-        if (this.preferVideo && supportsH264) list.push(e.encodingH264);
+        if (this.preferVideo && supportsH264) list.push(e.encodingH264, 0x4a56454d); // JumpVNC encoder metadata
         list.push(e.encodingTight, e.encodingTightPNG, e.encodingZRLE,
           e.encodingJPEG, e.encodingHextile, e.encodingRRE, e.encodingZlib);
       }
@@ -32,6 +34,7 @@ export function videoRFB(BaseRFB, encodings, supportsH264) {
         'ExtendedDesktopSize', 'Xvp', 'Fence', 'ContinuousUpdates', 'DesktopName',
         'ExtendedClipboard', 'ExtendedMouseButtons']) list.push(e['pseudoEncoding' + name]);
       if (this._fbDepth === 24) list.push(e.pseudoEncodingVMwareCursor, e.pseudoEncodingCursor);
+      list.push(captureStatusEncoding);
       BaseRFB.messages.clientEncodings(this._sock, list);
     }
   };

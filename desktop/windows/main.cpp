@@ -21,12 +21,37 @@ using Microsoft::WRL::ComPtr;
 #include "runtime.h"
 #include "h264_bridge.h"
 #include "cursor_bridge.h"
+#include "capture_status.h"
 #include "keyboard_input.h"
 struct ClientInput {
     std::set<WORD> keys;
     int buttons = 0;
+    bool reportCapture = false;
+    int lastCapture = -1;
     ULONGLONG created = GetTickCount64();
 };
+enum class CaptureMethod : unsigned char { Unavailable = 0, DXGI = 1, GDI = 2 };
+static CaptureMethod captureMethod = CaptureMethod::Unavailable;
+
+extern "C" void svncCaptureEnable(rfbClientPtr client, rfbBool enabled) {
+    auto &state = *static_cast<ClientInput *>(client->clientData);
+    state.reportCapture = enabled;
+    state.lastCapture = -1;
+}
+extern "C" int svncPendingCapture(rfbClientPtr client) {
+    const auto &state = *static_cast<ClientInput *>(client->clientData);
+    const int method = static_cast<int>(captureMethod);
+    return state.reportCapture && state.lastCapture != method ? method : -1;
+}
+extern "C" void svncAppendCapture(rfbClientPtr client, int method) {
+    // Called immediately after the framebuffer update header, before pixel rectangles.
+    rfbFramebufferUpdateRectHeader rect{};
+    rect.encoding = htonl(SVNC_CAPTURE_STATUS);
+    memcpy(client->updateBuf + client->ublen, &rect, sz_rfbFramebufferUpdateRectHeader);
+    client->ublen += sz_rfbFramebufferUpdateRectHeader;
+    client->updateBuf[client->ublen++] = static_cast<char>(method);
+    static_cast<ClientInput *>(client->clientData)->lastCapture = method;
+}
 static std::map<WORD, unsigned> keyOwners;
 static unsigned buttonOwners[3]{};
 static unsigned clientCount = 0;
@@ -536,7 +561,7 @@ int wmain(int argc, wchar_t **argv) {
     std::vector<char> pixels((size_t)width * height * 4);
     s->frameBuffer = pixels.data();
     serverFormat(s);
-    s->desktopName = "JumpVNC Server / LibVNCServer / Windows DXGI";
+    s->desktopName = "JumpVNC Server / LibVNCServer / Windows";
     s->listenInterface = htonl(INADDR_LOOPBACK);
     s->port = options.port;
     s->autoPort = FALSE;
@@ -658,6 +683,13 @@ int wmain(int argc, wchar_t **argv) {
             pollClipboard(s);
         }
         // One owner for LibVNCServer and framebuffer memory; no concurrent writes during encoding.
+        const auto method = !captureReady ? CaptureMethod::Unavailable :
+                            capture.gdi.pixels ? CaptureMethod::GDI : CaptureMethod::DXGI;
+        if (method != captureMethod) {
+            captureMethod = method;
+            // Wake incremental requests even when the first recovered frame is unchanged.
+            rfbMarkRectAsModified(s, 0, 0, 1, 1);
+        }
         rfbProcessEvents(s, 1000);
     }
     rfbShutdownServer(s, TRUE);

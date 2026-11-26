@@ -72,3 +72,10 @@ export class NetworkWindow {
     return { receiveMbps: bytes * 8 / seconds / 1e6 };
   }
 }
+
+export function formatReceiveRate(mbps) {
+  if (mbps == null) return { value: '—', unit: '' };
+  return mbps < 1
+    ? { value: (mbps * 1000).toFixed(1), unit: 'kbps' }
+    : { value: mbps.toFixed(1), unit: 'Mbps' };
+}
