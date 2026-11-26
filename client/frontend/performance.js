@@ -1,6 +1,6 @@
 export const qualityProfiles = Object.freeze({
-  video: { label: '视频', quality: 3, compression: 1, video: true },
-  sharp: { label: '清晰', quality: 8, compression: 2 },
+  video: { label: '动态画面', quality: 3, compression: 1, video: true },
+  sharp: { label: '清晰文字', quality: 8, compression: 2 },
 });
 
 export function applyQuality(rfb, name) {
@@ -71,4 +71,11 @@ export class NetworkWindow {
     if (seconds <= 0 || bytes < 0) return null;
     return { receiveMbps: bytes * 8 / seconds / 1e6 };
   }
+}
+
+export function formatReceiveRate(mbps) {
+  if (mbps == null) return { value: '—', unit: '' };
+  return mbps < 1
+    ? { value: (mbps * 1000).toFixed(1), unit: 'kbps' }
+    : { value: mbps.toFixed(1), unit: 'Mbps' };
 }

@@ -15,6 +15,7 @@ static uint64_t milliseconds() {
 struct VideoClient {
     H264Encoder encoder;
     bool reset = true;
+    bool reportEncoder = false;
     uint64_t lastFrame = 0;
     uint64_t reportAt = milliseconds();
     uint64_t bytes = 0, frames = 0, encodeMs = 0;
@@ -42,6 +43,8 @@ extern "C" rfbBool svncH264Select(rfbClientPtr cl) {
 extern "C" void svncH264Reset(rfbClientPtr cl) { clients.erase(cl); }
 extern "C" void svncH264Offered(rfbClientPtr cl, unsigned encoding) {
     auto found = clients.find(cl);
+    if (found != clients.end() && encoding == 0x4a56454d) // JumpVNC encoder metadata ("JVEM")
+        found->second->reportEncoder = true;
     if (found != clients.end() && encoding == rfbEncodingTight)
         found->second->fallback = rfbEncodingTight;
 }
@@ -104,7 +107,9 @@ extern "C" rfbBool svncH264Send(rfbClientPtr cl) {
     };
     word(4, cl->screen->width); word(6, cl->screen->height);
     dword(8, 50); dword(12, static_cast<unsigned>(bytes.size()));
-    dword(16, video.reset ? 2 : 0);
+    unsigned flags = video.reset ? 2 : 0;
+    if (video.reportEncoder) flags |= video.encoder.hardware() ? 0x200 : 0x100;
+    dword(16, flags);
     video.reset = false;
     if (rfbWriteExact(cl, reinterpret_cast<char*>(header), sizeof(header)) < 0 ||
         (!bytes.empty() && rfbWriteExact(cl, reinterpret_cast<const char*>(bytes.data()),

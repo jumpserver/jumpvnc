@@ -1,7 +1,54 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { NetworkWindow, PerformanceWindow } from './performance.js';
-import { measureRFB } from './rfb-performance.js';
+import { formatReceiveRate, NetworkWindow, PerformanceWindow } from './performance.js';
+import { captureStatusEncoding, measureRFB } from './rfb-performance.js';
+
+test('capture and encoder diagnostics follow server reports, including fallback and idle periods', () => {
+  class Base {
+    constructor() {
+      this._display = { _renderQ: [], flip() {}, flush() {} };
+      this._FBU = {};
+    }
+    _handleDataRect() { return this.complete; }
+  }
+  let now = 0;
+  const viewer = new (measureRFB(Base, () => ++now))();
+  let byte = 1, available = true;
+  viewer._sock = { rQwait: () => !available, rQshift8: () => byte, rQlen: () => 8,
+    rQpeekBytes: () => Uint8Array.of(0, 0, 0, 0, 0, 0, byte, 0) };
+  assert.equal(viewer.performanceSnapshot().captureMethod, 'Not reported');
+  viewer._FBU.encoding = captureStatusEncoding;
+  for (const [code, method] of [[1, 'DXGI'], [0, 'Unavailable'], [2, 'GDI']]) {
+    byte = code;
+    assert.equal(viewer._handleRect(), true);
+    assert.equal(viewer.performanceSnapshot().captureMethod, method);
+  }
+  available = false;
+  assert.equal(viewer._handleRect(), false);
+  viewer._FBU.encoding = 50;
+  viewer.complete = true;
+  for (const [code, mode] of [[0, 'Not reported'], [1, 'Software'], [2, 'Hardware']]) {
+    byte = code;
+    viewer._handleDataRect();
+    assert.equal(viewer.performanceSnapshot().encoderMode, mode);
+  }
+  viewer.complete = false;
+  byte = 1;
+  viewer._handleDataRect();
+  assert.equal(viewer.performanceSnapshot().encoderMode, 'Hardware');
+  viewer.complete = true;
+  viewer._FBU.encoding = 7;
+  viewer._handleDataRect();
+  assert.equal(viewer.performanceSnapshot().encoderMode, 'Inactive');
+  assert.equal(viewer.performanceSnapshot().captureMethod, 'GDI');
+});
+
+test('receive throughput distinguishes missing and idle samples and switches at 1 Mbps', () => {
+  assert.deepEqual(formatReceiveRate(null), { value: '—', unit: '' });
+  assert.deepEqual(formatReceiveRate(0), { value: '0.0', unit: 'kbps' });
+  assert.deepEqual(formatReceiveRate(0.3404), { value: '340.4', unit: 'kbps' });
+  assert.deepEqual(formatReceiveRate(1), { value: '1.0', unit: 'Mbps' });
+});
 
 test('network rates use elapsed time and reset on reconnect or counter reset', () => {
   const metrics = new NetworkWindow();

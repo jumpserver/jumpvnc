@@ -5,7 +5,7 @@ import { encodings } from './node_modules/@novnc/novnc/core/encodings.js';
 import { supportsWebCodecsH264Decode } from './node_modules/@novnc/novnc/core/util/browser.js';
 import { H264Parser } from './node_modules/@novnc/novnc/core/decoders/h264.js';
 import { installH264AccessUnits } from './h264-access-units.js';
-import { applyQuality, NetworkWindow, qualityProfiles } from './performance.js';
+import { applyQuality, formatReceiveRate, NetworkWindow, qualityProfiles } from './performance.js';
 import { measureRFB } from './rfb-performance.js';
 import { nativeRFB } from './native-rfb.js';
 import { videoRFB } from './video-rfb.js';
@@ -20,6 +20,8 @@ const call = (method, ...args) => window.mygo.call('Viewer.' + method, ...args);
 const form = $('connect-form');
 const filesPanel = $('files-panel');
 const list = $('file-list');
+const diagnostics = $('session-diagnostics');
+const signalButton = $('status-indicator');
 
 let client;
 let connected = false;
@@ -93,9 +95,9 @@ function selectQuality() {
   const profile = qualityProfiles[name];
   if (client) applyQuality(client, name);
   $('quality-settings').textContent = profile.video
-    ? (supportsWebCodecsH264Decode ? '适合动态画面和连续滚动，不支持视频编码时自动使用兼容编码。'
+    ? (supportsWebCodecsH264Decode ? '优先使用视频编码，适合滚动和动态画面。'
       : '当前窗口不支持视频解码，已使用兼容编码。')
-    : '适合文字办公，保留小字和细线的清晰度。';
+    : '优先保留文字和细线的清晰度。';
   $('header-quality').textContent = profile.label;
   $('header-quality').title = `画质请求：${profile.label}`;
   try { localStorage.setItem('sshvnc.quality', name); } catch { /* Optional preference storage. */ }
@@ -105,22 +107,25 @@ function resetPerformance() {
   stopPerformance?.();
   stopPerformance = undefined;
   for (const element of document.querySelectorAll('[data-metric]')) element.textContent = '—';
-  $('performance-panel').open = false;
+  $('connection-overlay').hidden = true;
+  if (diagnostics.open) diagnostics.close();
+  $('overlay-rate-unit').textContent = '';
   updateLatency(null);
 }
 
 function updateLatency(millis) {
-  const indicator = $('status-indicator');
-  const label = millis === null ? 'SSH 往返延迟采样中' : `SSH 往返延迟：${millis.toFixed(1)} ms`;
-  indicator.dataset.level = millis === null ? '0' : millis <= 30 ? '4' : millis <= 80 ? '3' : millis <= 150 ? '2' : '1';
-  indicator.title = label;
-  indicator.setAttribute('aria-label', label);
-  $('header-rtt').textContent = millis === null ? '—' : millis.toFixed(0) + ' ms';
+  signalButton.dataset.level = millis === null ? '0' : millis <= 30 ? '4' : millis <= 80 ? '3' : millis <= 150 ? '2' : '1';
+  const rtt = millis === null ? '—' : millis.toFixed(1) + ' ms';
+  signalButton.title = `Session diagnostics · SSH RTT ${rtt}`;
+  $('diag-rtt').textContent = rtt;
+  diagnostics.style.setProperty('--signal-color', getComputedStyle(signalButton).color);
 }
 
-function startPerformance(rfb, id) {
+function startPerformance(rfb, id, transport) {
   stopPerformance?.();
   const network = new NetworkWindow();
+  const overlay = $('connection-overlay');
+  $('diag-transport').textContent = { subsystem: 'SVNC · SSH over TCP', forward: 'VNC · SSH tunnel', vnc: 'VNC · TCP' }[transport];
   let stopped = false;
   let timer;
   stopPerformance = () => { stopped = true; clearTimeout(timer); };
@@ -130,40 +135,57 @@ function startPerformance(rfb, id) {
     if (!active()) return;
     const sample = rfb.performanceSnapshot();
     if (sample) {
-      $('metric-updates').textContent = sample.updatesPerSecond.toFixed(1) + ' 次/秒';
-      $('metric-encoding').textContent = sample.encodings.length
-        ? sample.encodings.slice(0, 3).map(([name, count]) => `${name} ${count}块`).join(' · ')
-        : sample.lastEncoding ? sample.lastEncoding + ' · 本次无更新' : '等待画面';
-      $('metric-decode').textContent = millis(sample.decodeMillis);
-      $('metric-paint').textContent = millis(sample.paintMillis);
-      $('metric-wait').textContent = millis(sample.waitMillis);
-      $('metric-queue').textContent = `${sample.queue} 项 · 峰值 ${sample.peakQueue}`;
-      $('metric-backlog').textContent = formatSize(sample.receiveBacklog);
-      $('metric-resolution').textContent = sample.width + ' × ' + sample.height;
+      $('diag-encoding').textContent = sample.encodings.length
+        ? sample.encodings.map(([name, count]) => `${name} · ${count} rect${count === 1 ? '' : 's'}`).join(' · ')
+        : sample.lastEncoding ? sample.lastEncoding + ' · idle' : '—';
+      $('diag-decode').textContent = millis(sample.decodeMillis);
+      $('diag-capture').textContent = sample.captureMethod;
+      $('diag-encoder').textContent = sample.encoderMode;
+      $('diag-paint').textContent = millis(sample.paintMillis);
+      $('diag-wait').textContent = millis(sample.waitMillis);
+      $('diag-queue').textContent = `${sample.queue} · peak ${sample.peakQueue}`;
+      $('diag-backlog').textContent = formatSize(sample.receiveBacklog);
       $('header-resolution').textContent = sample.width + ' × ' + sample.height;
-      $('metric-cursor').textContent = !sample.cursorShapeUpdates ? '未收到形状'
+      $('diag-cursor').textContent = !sample.cursorShapeUpdates ? 'Not reported'
         : sample.cursorWidth && sample.cursorHeight
-          ? `本地 · ${sample.cursorWidth} × ${sample.cursorHeight}` : '隐藏';
+          ? `Local · ${sample.cursorWidth} × ${sample.cursorHeight}` : 'Hidden';
     }
+    let duration = '—';
+    let receiveMbps = null;
+    let rtt = '—';
     try {
       const snapshot = await call('Performance', id);
       if (!active() || snapshot.id !== id) return;
+      const elapsed = Math.floor(snapshot.elapsedSeconds);
+      duration = [Math.floor(elapsed / 3600), Math.floor(elapsed / 60) % 60, elapsed % 60]
+        .map(value => String(value).padStart(2, '0')).join(':');
       const rate = network.sample(snapshot);
-      $('metric-bandwidth').textContent = rate ? rate.receiveMbps.toFixed(2) + ' Mbps' : '采样中…';
-      $('metric-rtt').textContent = snapshot.rttMillis === null ? '—' : snapshot.rttMillis.toFixed(1) + ' ms';
-      $('header-bandwidth').textContent = rate ? '↓ ' + rate.receiveMbps.toFixed(1) + ' Mbps' : '↓ —';
+      receiveMbps = rate?.receiveMbps ?? null;
+      if (snapshot.rttMillis !== null) rtt = snapshot.rttMillis.toFixed(1);
       updateLatency(snapshot.rttMillis);
-      $('metric-received').textContent = formatSize(snapshot.receivedBytes);
+      $('diag-received').textContent = formatSize(snapshot.receivedBytes);
     } catch {
       if (active()) {
-        $('metric-bandwidth').textContent = '暂不可用';
-        $('metric-rtt').textContent = '—';
-        $('metric-received').textContent = '—';
-        $('header-bandwidth').textContent = '↓ —';
+        $('diag-received').textContent = '—';
         updateLatency(null);
       }
     } finally {
-      if (active()) timer = setTimeout(tick, 1000);
+      if (active()) {
+        const { value, unit } = formatReceiveRate(receiveMbps);
+        const throughput = unit ? `${value} ${unit}` : value;
+        $('diag-receive').textContent = throughput;
+        $('header-bandwidth').textContent = '↓ ' + throughput;
+        $('overlay-duration').textContent = duration;
+        const updates = sample ? sample.updatesPerSecond.toFixed(1) : '—';
+        $('overlay-updates').textContent = updates;
+        $('diag-updates').textContent = sample ? updates + ' updates/s' : '—';
+        $('overlay-receive').textContent = value;
+        $('overlay-rate-unit').textContent = unit ? unit + ' ' : '';
+        $('overlay-rtt').textContent = rtt;
+        $('diag-resolution').textContent = $('overlay-resolution').textContent = sample?.width && sample.height ? sample.width + '×' + sample.height : '—';
+        overlay.hidden = !$('overlay-enabled').checked;
+        timer = setTimeout(tick, 1000);
+      }
     }
   }
   tick();
@@ -330,6 +352,9 @@ async function connect(event) {
     const updateEndpoint = () => {
       if (client !== rfb) return;
       const endpoint = desktopEndpoint(profile);
+      const host = profile.transport === 'forward' ? profile.vncHost || '127.0.0.1' : profile.host;
+      const port = profile.transport === 'forward' ? profile.vncPort : profile.port;
+      $('diag-endpoint').textContent = `${host.includes(':') && !host.startsWith('[') ? '[' + host + ']' : host}:${port}`;
       $('desktop-host').title = `${profile.jump ? profile.jump + ' · ' : ''}${endpoint}${desktopName ? ' · ' + desktopName : ''}`;
       $('connection-endpoint').textContent = `${profile.jump ? profile.jump + ' → ' : ''}${endpoint}`;
       $('connection-backend').textContent = desktopName || '等待服务端桌面名称';
@@ -361,7 +386,7 @@ async function connect(event) {
       rfb.focus();
       syncControls();
       listMessage(filesAvailable ? '打开文件管理后显示远程文件' : '文件传输不可用，桌面仍可正常使用');
-      startPerformance(rfb, connection.id);
+      startPerformance(rfb, connection.id, profile.transport);
       startClipboard(rfb, connection.id);
     });
     rfb.addEventListener('securityfailure', () => {
@@ -633,6 +658,11 @@ $('clipboard-copy').addEventListener('click', async () => {
 });
 window.addEventListener('focus', () => clipboard?.sync().catch(clipboardError));
 $('clipboard-dialog').addEventListener('close', () => { if (connected) client?.focus(); });
+$('overlay-enabled').addEventListener('change', event => {
+  const enabled = event.target.checked;
+  $('connection-overlay').hidden = !connected || !enabled;
+  try { localStorage.setItem('sshvnc.overlay', String(enabled)); } catch { /* Session preference still applies. */ }
+});
 $('quality-profile').addEventListener('change', selectQuality);
 $('files-toggle').addEventListener('click', () => showPanel(activePanel === 'files' ? null : 'files'));
 $('settings-toggle').addEventListener('click', () => showPanel(activePanel === 'settings' ? null : 'settings'));
@@ -644,6 +674,31 @@ $('send-secure-attention').addEventListener('click', () => {
 });
 $('files-close').addEventListener('click', () => showPanel(null));
 $('settings-close').addEventListener('click', () => showPanel(null));
+function positionDiagnostics() {
+  if (!diagnostics.open) return;
+  const anchor = signalButton.getBoundingClientRect();
+  const center = anchor.left + anchor.width / 2;
+  diagnostics.style.setProperty('--signal-x', center + 'px');
+  diagnostics.style.setProperty('--signal-tip', (center - diagnostics.getBoundingClientRect().left) + 'px');
+}
+signalButton.addEventListener('click', () => {
+  if (!connected || diagnostics.open) return;
+  diagnostics.showModal();
+  signalButton.setAttribute('aria-expanded', 'true');
+  positionDiagnostics();
+});
+window.addEventListener('resize', positionDiagnostics);
+diagnostics.addEventListener('click', event => {
+  if (event.target !== diagnostics) return;
+  const rect = diagnostics.getBoundingClientRect();
+  if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) {
+    diagnostics.close();
+  }
+});
+diagnostics.addEventListener('close', () => {
+  signalButton.setAttribute('aria-expanded', 'false');
+  if (connected) client?.focus();
+});
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && activePanel && !document.querySelector('dialog[open]')) {
     event.preventDefault();
@@ -682,6 +737,7 @@ async function init() {
   showFilesOffline();
   resetPerformance();
   try {
+    $('overlay-enabled').checked = localStorage.getItem('sshvnc.overlay') !== 'false';
     const saved = localStorage.getItem('sshvnc.quality');
     if (Object.hasOwn(qualityProfiles, saved)) $('quality-profile').value = saved;
   } catch { /* Use video if preference storage is unavailable. */ }
