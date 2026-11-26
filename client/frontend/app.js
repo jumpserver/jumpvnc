@@ -95,9 +95,9 @@ function selectQuality() {
   const profile = qualityProfiles[name];
   if (client) applyQuality(client, name);
   $('quality-settings').textContent = profile.video
-    ? (supportsWebCodecsH264Decode ? '优先使用视频编码，适合滚动和动态画面。'
+    ? (supportsWebCodecsH264Decode ? '适合动态画面和连续滚动，不支持视频编码时自动使用兼容编码。'
       : '当前窗口不支持视频解码，已使用兼容编码。')
-    : '优先保留文字和细线的清晰度。';
+    : '适合文字办公，保留小字和细线的清晰度。';
   $('header-quality').textContent = profile.label;
   $('header-quality').title = `画质请求：${profile.label}`;
   try { localStorage.setItem('sshvnc.quality', name); } catch { /* Optional preference storage. */ }

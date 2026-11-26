@@ -1,6 +1,6 @@
 export const qualityProfiles = Object.freeze({
-  video: { label: '动态画面', quality: 3, compression: 1, video: true },
-  sharp: { label: '清晰文字', quality: 8, compression: 2 },
+  video: { label: '视频', quality: 3, compression: 1, video: true },
+  sharp: { label: '清晰', quality: 8, compression: 2 },
 });
 
 export function applyQuality(rfb, name) {

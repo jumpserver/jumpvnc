@@ -15,7 +15,7 @@
         <button id="status-indicator" class="signal-indicator" type="button" data-level="0" aria-label="Session diagnostics" title="Session diagnostics" aria-haspopup="dialog" aria-controls="session-diagnostics" aria-expanded="false"><svg viewBox="0 0 18 16" aria-hidden="true" fill="currentColor"><g id="signal-bars"><rect class="signal-bar" x="1" y="11" width="3" height="4" rx=".8"/><rect class="signal-bar" x="5.5" y="8" width="3" height="7" rx=".8"/><rect class="signal-bar" x="10" y="4.5" width="3" height="10.5" rx=".8"/><rect class="signal-bar" x="14.5" y="1" width="3" height="14" rx=".8"/></g></svg></button>
         <span id="header-bandwidth" data-metric title="桌面接收速率，不含文件传输">—</span>
         <span id="header-resolution" data-metric title="远端画面分辨率">—</span>
-        <span id="header-quality" title="客户端请求的画质档位">动态画面</span>
+        <span id="header-quality" title="客户端请求的画质档位">视频</span>
       </div>
     </div>
     <nav class="toolbar" aria-label="桌面工具">
@@ -77,7 +77,7 @@
           <button id="send-secure-attention" type="button" disabled>发送 Ctrl+Alt+Del</button>
         </section>
         <section class="setting-section">
-          <label class="setting-row" for="quality-profile"><span>画质</span><select id="quality-profile" aria-describedby="quality-settings"><option value="video" selected>动态画面</option><option value="sharp">清晰文字</option></select></label>
+          <label class="setting-row" for="quality-profile"><span>画质</span><select id="quality-profile" aria-describedby="quality-settings"><option value="video" selected>视频</option><option value="sharp">清晰</option></select></label>
           <p id="quality-settings" class="setting-note"></p>
           <label class="setting-row overlay-setting" for="overlay-enabled" title="在远程桌面右下角显示实时连接信息"><span>网络状态</span><input id="overlay-enabled" type="checkbox" role="switch" checked></label>
         </section>
