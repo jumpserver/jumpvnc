@@ -86,4 +86,10 @@ bash install.sh
 
 源码构建与测试见 [开发指南](docs/development.md)；协议与第三方集成见 [SVNC 规范](docs/protocol.md)。
 
-**许可证**：项目采用 [GNU GPLv3](LICENSE)，第三方组件保留其各自许可，见 [第三方许可说明](THIRD_PARTY_NOTICES.md)。
+## 许可证
+
+Copyright (c) 2014-2026 FIT2CLOUD, All rights reserved.
+
+本项目基于 GNU General Public License version 3（GPLv3）许可，与 [JumpServer 主仓库](https://github.com/jumpserver/jumpserver)一致。完整许可文本请参阅 [LICENSE](LICENSE)。
+
+第三方组件保留其各自许可，见 [第三方许可说明](THIRD_PARTY_NOTICES.md)。
