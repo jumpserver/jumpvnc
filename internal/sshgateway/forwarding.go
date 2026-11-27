@@ -32,6 +32,11 @@ func (s *Server) forward(ctx context.Context, incoming ssh.NewChannel, log *slog
 		log.Info("ssh.forward", "result", "denied", "reason", "target_policy")
 		return
 	}
+	if !s.desktops.enter() {
+		incoming.Reject(ssh.ResourceShortage, "console in use")
+		return
+	}
+	defer s.desktops.leave(false)
 
 	backend, err := s.dialVNC(ctx)
 	if err != nil {
@@ -64,6 +69,10 @@ type desktopStream interface {
 }
 
 func (s *Server) relayVNC(ctx context.Context, channel desktopStream, backend *net.TCPConn, log *slog.Logger) {
+	s.relayDesktop(ctx, channel, backend, backend, log)
+}
+
+func (s *Server) relayDesktop(ctx context.Context, channel desktopStream, backend *net.TCPConn, download io.Reader, log *slog.Logger) {
 	stop := context.AfterFunc(ctx, func() { backend.Close(); channel.Close() })
 	defer stop()
 	start := time.Now()
@@ -82,7 +91,7 @@ func (s *Server) relayVNC(ctx context.Context, channel desktopStream, backend *n
 		}
 		toVNC <- transfer{n, err}
 	}()
-	downloaded, copyErr := io.Copy(channel, backend)
+	downloaded, copyErr := io.Copy(channel, download)
 	channel.CloseWrite()
 	if !closedNormally(copyErr) {
 		backend.Close()

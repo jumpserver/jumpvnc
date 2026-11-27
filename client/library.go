@@ -93,6 +93,7 @@ func (s *libraryStore) load() (Library, error) {
 		serverIDs[server.ID] = true
 		server.Profile.VNCPassword = ""
 		server.Profile.SSHPassword = ""
+		server.Profile.WindowsPassword = ""
 		server.Profile.TrustHostKey, server.Profile.TrustHost = "", ""
 		if server.Profile.Transport == "" {
 			server.Profile.Transport = "forward"
@@ -114,6 +115,7 @@ func (s *libraryStore) update(change func(*Library) error) (Library, error) {
 	for i := range lib.Servers {
 		lib.Servers[i].Profile.VNCPassword = ""
 		lib.Servers[i].Profile.SSHPassword = ""
+		lib.Servers[i].Profile.WindowsPassword = ""
 		lib.Servers[i].Profile.TrustHostKey, lib.Servers[i].Profile.TrustHost = "", ""
 	}
 	data, err := json.MarshalIndent(lib, "", "  ")
@@ -171,14 +173,15 @@ func (s *libraryStore) saveServerRecord(server Server, profileOnly bool) (Librar
 	p.Host, p.User, p.Jump = strings.TrimSpace(p.Host), strings.TrimSpace(p.User), strings.TrimSpace(p.Jump)
 	p.Identity, p.KnownHosts, p.HostKeyAlias = strings.TrimSpace(p.Identity), strings.TrimSpace(p.KnownHosts), strings.TrimSpace(p.HostKeyAlias)
 	p.VNCHost = strings.TrimSpace(p.VNCHost)
+	p.WindowsAccount = strings.TrimSpace(p.WindowsAccount)
 	if !profileOnly && (server.Name == "" || len([]rune(server.Name)) > 100) {
 		return Library{}, errors.New("连接名称应为 1–100 个字符")
 	}
 	user := p.User
 	*p = p.withDefaults()
 	p.User = user // An omitted account is requested when connecting.
-	if p.Host == "" || p.validateTransport() != nil {
-		return Library{}, errors.New("请填写服务器地址和有效的连接设置")
+	if err := p.validateTransport(); err != nil {
+		return Library{}, err
 	}
 	var newRef, oldRef string
 	lib, err := s.update(func(lib *Library) error {

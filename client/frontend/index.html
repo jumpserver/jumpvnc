@@ -74,20 +74,29 @@
         <label>所属分类<span class="select-field"><select name="folderId"></select></span></label>
         <label>服务器地址<input name="host" required placeholder="IP 地址或主机名" autocomplete="off"></label>
         <label>端口<input name="port" type="number" min="1" max="65535" placeholder="5922"></label>
-        <label class="wide" data-user>用户名<input name="user" placeholder="vncuser" autocomplete="off"></label>
-        <label class="wide">VNC 密码<input name="vncPassword" type="password" autocomplete="new-password" placeholder="可选，连接时填写"></label>
-        <label class="checkbox-row wide"><input name="storedPassword" type="checkbox" checked>保存 VNC 密码</label>
-        <label class="checkbox-row wide" data-vnc hidden><input name="sshTunnel" type="checkbox">使用 SSH 隧道</label>
-        <label data-ssh-tunnel hidden>SSH 服务器<input name="sshHost" autocomplete="off" disabled></label>
-        <label data-ssh-tunnel hidden>SSH 端口<input name="sshPort" type="number" min="1" max="65535" value="22" disabled></label>
-        <label class="wide" data-ssh-tunnel hidden>SSH 用户名<input name="sshUser" autocomplete="off" disabled></label>
-        <label class="wide" data-ssh-tunnel hidden>SSH 密码<input name="sshPassword" type="password" autocomplete="new-password" placeholder="可选，也可使用本机身份"></label>
-        <label class="checkbox-row wide" data-ssh-tunnel hidden><input name="storedSSHPassword" type="checkbox" checked>保存 SSH 密码</label>
-        <label class="wide" data-ssh-tunnel hidden>SSH 跳板机<input name="jump" placeholder="可选" autocomplete="off"></label>
-        <label class="wide" data-ssh>SSH 私钥文件<input name="identity" placeholder="可选，默认使用本机身份" autocomplete="off"></label>
+        <div class="wide windows-fields" data-windows>
+          <label>Windows 账号<input name="windowsAccount" placeholder="例如 .\Administrator" autocomplete="off" spellcheck="false"></label>
+          <label>Windows 密码<input name="windowsPassword" type="password" autocomplete="off" placeholder="连接时输入"></label>
+          <label class="checkbox-row wide" data-windows-keychain hidden><input name="storedWindowsPassword" type="checkbox">在本机钥匙串中记住 Windows 密码</label>
+        </div>
+        <details class="wide connection-advanced">
+          <summary>高级设置</summary>
+          <div class="fields">
+            <label class="wide" data-user>SSH 用户名<input name="user" placeholder="vncuser" autocomplete="off"></label>
+            <label class="wide">VNC 密码<input name="vncPassword" type="password" autocomplete="new-password" placeholder="可选，连接时填写"></label>
+            <label class="checkbox-row wide"><input name="storedPassword" type="checkbox" checked>保存 VNC 密码</label>
+            <label class="checkbox-row wide" data-vnc hidden><input name="sshTunnel" type="checkbox">使用 SSH 隧道</label>
+            <label data-ssh-tunnel hidden>SSH 服务器<input name="sshHost" autocomplete="off" disabled></label>
+            <label data-ssh-tunnel hidden>SSH 端口<input name="sshPort" type="number" min="1" max="65535" value="22" disabled></label>
+            <label class="wide" data-ssh-tunnel hidden>SSH 用户名<input name="sshUser" autocomplete="off" disabled></label>
+            <label class="wide" data-ssh-tunnel hidden>SSH 密码<input name="sshPassword" type="password" autocomplete="new-password" placeholder="可选，也可使用本机身份"></label>
+            <label class="checkbox-row wide" data-ssh-tunnel hidden><input name="storedSSHPassword" type="checkbox" checked>保存 SSH 密码</label>
+            <label class="wide" data-ssh-tunnel hidden>SSH 跳板机<input name="jump" placeholder="可选" autocomplete="off"></label>
+            <label class="wide" data-ssh>SSH 私钥文件<input name="identity" placeholder="可选，默认使用本机身份" autocomplete="off"></label>
+          </div>
+        </details>
       </div>
       <input name="transport" type="hidden"><input name="knownHosts" type="hidden"><input name="hostKeyAlias" type="hidden"><input name="vncUsername" type="hidden">
-      <p class="form-note"><svg class="icon"><use href="#i-lock"/></svg>账号、密码可留空，连接时补填。</p>
       <p id="server-error" class="form-error" role="alert" hidden></p>
       <div class="dialog-buttons"><button type="button" class="dialog-close">取消</button><button id="save-server" class="primary" type="submit">保存连接</button></div>
     </form>

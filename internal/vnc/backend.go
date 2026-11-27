@@ -23,6 +23,15 @@ type Backend struct {
 	Exited <-chan error
 	Stop   func()
 	Dial   func(context.Context) (*net.TCPConn, error)
+	Login  ConsoleLogin
+}
+
+// ConsoleLogin is available only on a writable Windows physical console.
+type ConsoleLogin interface {
+	Available() bool
+	Active(account string) bool
+	Ready() bool
+	Submit(ctx context.Context, account string, password []byte) error
 }
 
 // Start waits for the configured RFB endpoint. An external backend remains

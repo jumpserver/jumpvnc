@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net"
 	"path/filepath"
-	"runtime"
 	"time"
 	"unsafe"
 
@@ -78,7 +77,11 @@ func StartConsole(ctx context.Context, cfg config.VNC, log *slog.Logger, logPath
 		return Backend{}, err
 	}
 	log.Info("vnc.ready", "engine", cfg.Engine, "listen", cfg.Listen, "console_session", session)
-	return Backend{Exited: exited, Stop: stop, Dial: dial}, nil
+	backend := Backend{Exited: exited, Stop: stop, Dial: dial}
+	if !cfg.ViewOnly {
+		backend.Login = windowsLogin{session: session, log: log}
+	}
+	return backend, nil
 }
 
 func launchConsoleProcess(session uint32, executable string, args []string) (windows.ProcessInformation, error) {
@@ -165,49 +168,35 @@ func waitConsoleProcess(process, sasEvent windows.Handle, session uint32, log *s
 			}
 			return nil
 		}
-		if windows.WTSGetActiveConsoleSessionId() == session && time.Since(previousSAS) >= time.Second {
-			previousSAS = time.Now()
-			if err := sendConsoleSAS(process); err != nil {
-				log.Warn("vnc.console.sas_failed", "error", err)
-			}
+		active := windows.WTSGetActiveConsoleSessionId()
+		requestLog := log.With("console_session", session, "active_session", active)
+		requestLog.Info("vnc.console.sas_received")
+		if active != session {
+			requestLog.Info("vnc.console.sas_skipped", "reason", "console_changed")
+			continue
+		}
+		if time.Since(previousSAS) < time.Second {
+			requestLog.Info("vnc.console.sas_skipped", "reason", "rate_limit")
+			continue
+		}
+		previousSAS = time.Now()
+		if err := sendConsoleSAS(requestLog); err != nil {
+			requestLog.Warn("vnc.console.sas_failed", "error", err)
 		}
 	}
 }
 
 var sendSAS = windows.NewLazySystemDLL("sas.dll").NewProc("SendSAS")
 
-// SendSAS from the SCM service while impersonating the console process so
-// Windows associates the request with the correct session and applies policy.
-func sendConsoleSAS(process windows.Handle) error {
+// This backend serves only the active physical console. Request SAS as the SCM service.
+func sendConsoleSAS(log *slog.Logger) error {
 	if err := sendSAS.Find(); err != nil {
 		return err
 	}
-	var primary, impersonation windows.Token
-	if err := windows.OpenProcessToken(process, windows.TOKEN_DUPLICATE, &primary); err != nil {
-		return err
-	}
-	defer primary.Close()
-	if err := windows.DuplicateTokenEx(primary, windows.TOKEN_IMPERSONATE, nil, windows.SecurityImpersonation, windows.TokenImpersonation, &impersonation); err != nil {
-		return err
-	}
-	defer impersonation.Close()
-	result := make(chan error, 1)
-	go func() {
-		runtime.LockOSThread()
-		if err := windows.SetThreadToken(nil, impersonation); err != nil {
-			runtime.UnlockOSThread()
-			result <- err
-			return
-		}
-		sendSAS.Call(0)
-		err := windows.RevertToSelf()
-		if err == nil {
-			runtime.UnlockOSThread()
-		}
-		// On failure, exiting this goroutine also retires its impersonating thread.
-		result <- err
-	}()
-	return <-result
+	log.Info("vnc.console.sas_call", "caller", "service")
+	sendSAS.Call(0)
+	log.Info("vnc.console.sas_api_returned", "caller", "service")
+	return nil
 }
 
 var getExtendedTCPTable = windows.NewLazySystemDLL("iphlpapi.dll").NewProc("GetExtendedTcpTable")

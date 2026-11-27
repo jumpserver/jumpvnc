@@ -1,5 +1,5 @@
 import { selectServers } from './catalog.js';
-import { syncTransport, setProfile, profileFromForm, desktopEndpoint } from './transport.js';
+import { bindConnectionForm, syncTransport, setProfile, profileFromForm, desktopEndpoint } from './transport.js';
 
 if (['darwin', 'win32'].includes(window.mygo?.platform)) {
   document.documentElement.classList.add('native-material');
@@ -8,6 +8,7 @@ if (['darwin', 'win32'].includes(window.mygo?.platform)) {
 const $ = id => document.getElementById(id);
 const call = (method, ...args) => window.mygo.call('Manager.' + method, ...args);
 const serverForm = $('server-form');
+bindConnectionForm(serverForm);
 const folderForm = $('folder-form');
 let library = { folders: [], servers: [] };
 let defaults;
@@ -325,9 +326,12 @@ function syncStoredPassword() {
   const saved = editingServer?.profile || defaults;
   const current = profileFromForm(serverForm);
   const matches = saved && keys.every(key =>
-    String(current[key]).trim() === String(saved[key]));
+    String(current[key] ?? '').trim() === String(saved[key] ?? ''));
   serverForm.elements.vncPassword.placeholder = matches && saved.storedPassword ? '已保存，留空保留原密码' : '可选，连接时填写';
   serverForm.elements.sshPassword.placeholder = matches && saved.storedSSHPassword ? '已保存，留空保留原密码' : '可选，也可使用本机身份';
+  const windowsPassword = serverForm.elements.windowsPassword;
+  windowsPassword.placeholder = matches && current.windowsAccount === saved.windowsAccount && current.storedWindowsPassword && saved.storedWindowsPassword
+    ? '已保存，留空保留原密码' : windowsPassword.disabled ? '连接时输入' : '输入要保存的密码';
 }
 
 function showServer(server) {
@@ -387,6 +391,7 @@ serverForm.addEventListener('input', syncStoredPassword);
 $('server-dialog').addEventListener('close', () => {
   serverForm.elements.vncPassword.value = '';
   serverForm.elements.sshPassword.value = '';
+  serverForm.elements.windowsPassword.value = '';
 });
 
 folderForm.addEventListener('submit', async event => {

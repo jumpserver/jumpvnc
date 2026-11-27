@@ -181,6 +181,15 @@ dialog input:not([type="checkbox"]), dialog select { display: block; width: 100%
   pointer-events: none;
 }
 .wide { grid-column: 1 / -1; }
+
+.windows-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.windows-fields .checkbox-row, .connection-advanced .checkbox-row { margin-top: 0; }
+.connection-advanced { border-top: 1px solid #e5e8e7; padding-top: 12px; }
+.connection-advanced > summary { width: fit-content; color: #536058; font-size: 12px; cursor: pointer; }
+.connection-advanced[open] > summary { margin-bottom: 14px; }
+form[data-protocol="vnc"] .connection-advanced { border: 0; padding: 0; }
+form[data-protocol="vnc"] .connection-advanced > summary { display: none; }
+
 label.checkbox-row { display: flex; align-items: center; gap: 6px; margin-top: 17px; }
 input[type="checkbox"] { accent-color: var(--accent); }
 .form-note { display: flex; align-items: center; gap: 5px; color: #a3aba5; margin-top: 19px; font-size: 10px; }

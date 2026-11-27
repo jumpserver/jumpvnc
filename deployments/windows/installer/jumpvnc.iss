@@ -32,6 +32,9 @@ CloseApplications=yes
 RestartApplications=no
 UninstallDisplayName=JumpVNC Server
 
+[Tasks]
+Name: "windowslogin"; Description: "Enable Windows console sign-in from JumpVNC Viewer"; Flags: unchecked
+
 [Files]
 Source: "{#PackageDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#RedistPath}"; DestDir: "{tmp}"; Flags: deleteafterinstall
@@ -72,6 +75,7 @@ begin
     RaiseException('The Visual C++ runtime could not be installed.');
   Extra := '';
   if ExpandConstant('{param:NoStartService|0}') = '1' then Extra := '-NoStartService';
+  if WizardIsTaskSelected('windowslogin') then Extra := Extra + ' -EnableWindowsLogin';
   if not RunPowerShell(ExpandConstant('{app}\deployments\windows\installer\setup-service.ps1'), Extra) then
     RaiseException('Could not configure JumpVNC. See setup.log in the installation directory.');
 end;

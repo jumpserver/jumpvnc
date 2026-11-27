@@ -111,6 +111,7 @@ func runWithBackend(ctx context.Context, name string, log *slog.Logger, ready fu
 		defer backend.Stop()
 	}
 	gateway.SetVNCDialer(backend.Dial)
+	gateway.SetConsoleLogin(backend.Login)
 	var compatibility net.Listener
 	if cfg.VNC.Compatibility.Enabled {
 		compatibility, err = listenTCP(cfg.VNC.Compatibility.Listen)

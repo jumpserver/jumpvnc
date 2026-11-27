@@ -16,6 +16,7 @@ import (
 
 	"jumpvnc/internal/config"
 	"jumpvnc/internal/sftpfs"
+	"jumpvnc/internal/vnc"
 )
 
 type Server struct {
@@ -25,7 +26,11 @@ type Server struct {
 	keys           map[string]struct{}
 	files          *sftpfs.Filesystem
 	dialVNCBackend func(context.Context) (*net.TCPConn, error)
+	login          vnc.ConsoleLogin
+	desktops       desktopAccess
 }
+
+func (s *Server) SetConsoleLogin(login vnc.ConsoleLogin) { s.login = login }
 
 // SetVNCDialer configures backend verification before the server begins serving.
 func (s *Server) SetVNCDialer(dial func(context.Context) (*net.TCPConn, error)) {

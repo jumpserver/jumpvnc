@@ -82,10 +82,21 @@ button.danger:hover:enabled { background: #fff4f4; }
 .connection-state h2 { font-size: 18px; font-weight: 550; color: #626c79; }
 #state-endpoint { margin-top: 12px; color: #929aa6; overflow-wrap: anywhere; }
 #state-error { margin-top: 18px; line-height: 1.6; color: #ba5555; overflow-wrap: anywhere; }
+#cancel-recovery { margin-top: 22px; }
 #state-actions { display: flex; justify-content: center; gap: 9px; margin-top: 22px; }
 #connect-form h2 { font-size: 19px; font-weight: 600; margin-bottom: 22px; }
 .fields { display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(0, 1fr); gap: 14px; }
 .wide { grid-column: 1 / -1; }
+
+.windows-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+#windows-login-notice { position: absolute; z-index: 2; top: 12px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; width: max-content; max-width: calc(100% - 24px); padding: 8px 12px; border: 1px solid #ddd4bb; border-radius: 6px; background: #fff8e6; color: #594619; font-size: 12px; }
+.windows-fields .checkbox-row, .connection-advanced .checkbox-row { margin-top: 0; }
+.connection-advanced { border-top: 1px solid #e5e8e7; padding-top: 12px; }
+.connection-advanced > summary { width: fit-content; color: #536058; font-size: 12px; cursor: pointer; }
+.connection-advanced[open] > summary { margin-bottom: 14px; }
+form[data-protocol="vnc"] .connection-advanced { border: 0; padding: 0; }
+form[data-protocol="vnc"] .connection-advanced > summary { display: none; }
+
 label { display: grid; gap: 7px; color: #747c87; }
 input:not([type="checkbox"]), select, textarea { width: 100%; min-width: 0; padding: 8px 9px; color: #39424f; background: #fff; border: 1px solid #dce1e7; border-radius: 5px; }
 .select-field { position: relative; min-width: 0; }

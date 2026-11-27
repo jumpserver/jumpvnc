@@ -25,6 +25,11 @@ import (
 
 func startGateway(t *testing.T, mode string, options ...func(*config.Config)) (*ssh.Client, string, string) {
 	t.Helper()
+	return startGatewayWithSetup(t, mode, nil, options...)
+}
+
+func startGatewayWithSetup(t *testing.T, mode string, setup func(*sshgateway.Server), options ...func(*config.Config)) (*ssh.Client, string, string) {
+	t.Helper()
 	state := t.TempDir()
 	root := filepath.Join(state, "exchange")
 	if err := os.Mkdir(root, 0700); err != nil {
@@ -95,6 +100,9 @@ func startGateway(t *testing.T, mode string, options ...func(*config.Config)) (*
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { gateway.Close() })
+	if setup != nil {
+		setup(gateway)
+	}
 
 	listener := listen(t)
 	ctx, cancel := context.WithCancel(context.Background())

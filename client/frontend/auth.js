@@ -1,6 +1,7 @@
 export function missingCredentials(profile) {
   const missing = [];
   if (profile.transport !== 'vnc' && !profile.user.trim()) missing.push('user');
+  if (profile.transport === 'subsystem' && profile.windowsAccount && !profile.storedWindowsPassword && !profile.windowsPassword) missing.push('windowsPassword');
   if (!profile.storedPassword && !profile.vncPassword) missing.push('vncPassword');
   return missing;
 }
@@ -17,6 +18,7 @@ export function profileToSave(profile, values = {}) {
   const next = applyCredentials({ ...profile }, values);
   next.storedPassword = !!next.vncPassword || profile.storedPassword;
   next.storedSSHPassword = !!next.sshPassword || profile.storedSSHPassword;
+  if (!next.storedWindowsPassword) next.windowsPassword = '';
   return next;
 }
 
@@ -30,8 +32,9 @@ export async function promptCredentials(profile, fields, message, onSave) {
   const save = document.getElementById('credentials-save');
   form.querySelectorAll('button').forEach(button => { button.disabled = false; });
   save.textContent = '保存';
-  save.hidden = !onSave;
-  document.getElementById('credentials-message').textContent = message || '请填写连接所需的账号和密码。';
+  save.hidden = !onSave || (fields.length === 1 && fields[0] === 'windowsPassword' && !profile.storedWindowsPassword);
+  document.getElementById('credentials-message').textContent = message || (fields.includes('windowsPassword')
+    ? `登录 ${profile.windowsAccount}` : '请填写连接所需的账号和密码。');
   for (const row of form.querySelectorAll('[data-credential]')) {
     const name = row.dataset.credential;
     const input = form.elements[name];
@@ -71,7 +74,8 @@ export async function promptCredentials(profile, fields, message, onSave) {
     save.textContent = '保存中…';
     try {
       const server = await onSave(next);
-      Object.assign(profile, server.profile, { vncPassword: next.vncPassword, sshPassword: next.sshPassword });
+      const windowsPassword = fields.includes('windowsPassword') ? values.windowsPassword : profile.windowsPassword;
+      Object.assign(profile, server.profile, { vncPassword: next.vncPassword, sshPassword: next.sshPassword, windowsPassword });
       if (dialog.open) document.getElementById('credentials-message').textContent = '已保存，可以继续连接。';
     } catch (err) {
       if (dialog.open) document.getElementById('credentials-message').textContent = err?.message || String(err);

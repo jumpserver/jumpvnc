@@ -2,6 +2,7 @@ package sshgateway
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"time"
 
@@ -88,6 +89,12 @@ func rejectRequest(req *ssh.Request, log *slog.Logger) {
 }
 
 func (s *Server) vncSubsystem(ctx context.Context, channel ssh.Channel, requests <-chan *ssh.Request, req *ssh.Request, log *slog.Logger) {
+	if !s.desktops.enter() {
+		rejectRequest(req, log)
+		return
+	}
+	login := &desktopLogin{}
+	defer func() { s.desktops.leave(login.exclusive) }()
 	backend, err := s.dialVNC(ctx)
 	if err != nil {
 		rejectRequest(req, log)
@@ -98,8 +105,30 @@ func (s *Server) vncSubsystem(ctx context.Context, channel ssh.Channel, requests
 	if req.WantReply && req.Reply(true, nil) != nil {
 		return
 	}
+	if s.login == nil {
+		done := make(chan struct{})
+		defer close(done)
+		go denyRequests(requests, done, log)
+		s.relayVNC(ctx, channel, backend, log)
+		return
+	}
+	ctx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
-	defer close(done)
-	go denyRequests(requests, done, log)
-	s.relayVNC(ctx, channel, backend, log)
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case request, ok := <-requests:
+				if !ok {
+					return
+				}
+				login.handle(ctx, s, request, log)
+			}
+		}
+	}()
+	s.relayDesktop(ctx, channel, backend, io.TeeReader(backend, &login.proof), log)
+	cancel()
+	<-done
 }

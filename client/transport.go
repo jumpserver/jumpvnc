@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf16"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -17,24 +19,27 @@ import (
 const sshTimeout = 12 * time.Second
 
 type Profile struct {
-	TrustHostKey      string `json:"trustHostKey,omitempty"`
-	TrustHost         string `json:"trustHost,omitempty"`
-	Transport         string `json:"transport"`
-	Host              string `json:"host"`
-	Port              int    `json:"port"`
-	User              string `json:"user"`
-	Jump              string `json:"jump"`
-	Identity          string `json:"identity"`
-	KnownHosts        string `json:"knownHosts"`
-	HostKeyAlias      string `json:"hostKeyAlias"`
-	VNCPort           int    `json:"vncPort"`
-	VNCHost           string `json:"vncHost,omitempty"`
-	VNCPassword       string `json:"vncPassword"`
-	VNCUsername       string `json:"vncUsername,omitempty"`
-	StoredPassword    bool   `json:"storedPassword"`
-	SSHPassword       string `json:"sshPassword,omitempty"`
-	StoredSSHPassword bool   `json:"storedSSHPassword,omitempty"`
-	PasswordRef       string `json:"passwordRef,omitempty"`
+	TrustHostKey          string `json:"trustHostKey,omitempty"`
+	TrustHost             string `json:"trustHost,omitempty"`
+	Transport             string `json:"transport"`
+	Host                  string `json:"host"`
+	Port                  int    `json:"port"`
+	User                  string `json:"user"`
+	Jump                  string `json:"jump"`
+	Identity              string `json:"identity"`
+	KnownHosts            string `json:"knownHosts"`
+	HostKeyAlias          string `json:"hostKeyAlias"`
+	VNCPort               int    `json:"vncPort"`
+	VNCHost               string `json:"vncHost,omitempty"`
+	VNCPassword           string `json:"vncPassword"`
+	VNCUsername           string `json:"vncUsername,omitempty"`
+	StoredPassword        bool   `json:"storedPassword"`
+	SSHPassword           string `json:"sshPassword,omitempty"`
+	StoredSSHPassword     bool   `json:"storedSSHPassword,omitempty"`
+	WindowsAccount        string `json:"windowsAccount,omitempty"`
+	WindowsPassword       string `json:"windowsPassword,omitempty"`
+	StoredWindowsPassword bool   `json:"storedWindowsPassword,omitempty"`
+	PasswordRef           string `json:"passwordRef,omitempty"`
 }
 
 func defaultProfile() Profile {
@@ -152,6 +157,21 @@ func (a targetAddr) String() string  { return string(a) }
 
 // Profiles saved before subsystems were introduced keep their original tunnel.
 func (p Profile) validateTransport() error {
+	if p.WindowsAccount != "" || p.WindowsPassword != "" || p.StoredWindowsPassword {
+		if p.Transport != "subsystem" {
+			return errors.New("Windows 登录仅支持 SVNC 连接")
+		}
+		if err := validateWindowsAccount(p.WindowsAccount); err != nil {
+			return err
+		}
+		units := 0
+		for _, r := range p.WindowsPassword {
+			units += utf16.RuneLen(r)
+			if r == 0 || units > 256 {
+				return errors.New("Windows 密码格式或长度无效")
+			}
+		}
+	}
 	if p.Transport != "" && p.Transport != "subsystem" && p.Transport != "forward" && p.Transport != "vnc" {
 		return errors.New("不支持的桌面连接方式")
 	}
@@ -160,6 +180,14 @@ func (p Profile) validateTransport() error {
 	}
 	if !validHost(p.Host) || (p.VNCHost != "" && !validHost(p.VNCHost)) {
 		return errors.New("请填写有效的服务器地址")
+	}
+	return nil
+}
+
+func validateWindowsAccount(name string) error {
+	account := strings.TrimPrefix(name, `.\`)
+	if account == "" || len(utf16.Encode([]rune(name))) > 256 || strings.ContainsAny(account, `\/@`) || strings.IndexFunc(account, unicode.IsControl) >= 0 {
+		return errors.New(`请填写 Windows 本机账号，例如 .\Administrator`)
 	}
 	return nil
 }
