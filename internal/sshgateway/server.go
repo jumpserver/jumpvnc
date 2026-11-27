@@ -16,6 +16,7 @@ import (
 
 	"jumpvnc/internal/config"
 	"jumpvnc/internal/sftpfs"
+	"jumpvnc/internal/vnc"
 )
 
 type Server struct {
@@ -24,26 +25,30 @@ type Server struct {
 	signer         ssh.Signer
 	keys           map[string]struct{}
 	files          *sftpfs.Filesystem
-	dialVNCBackend func(context.Context) (*net.TCPConn, error)
+	dialVNCBackend func(context.Context) (vnc.Desktop, error)
+	desktops       desktopAccess
+	Connections    *Connections
+	Managed        *ManagedLogin
 }
 
 // SetVNCDialer configures backend verification before the server begins serving.
-func (s *Server) SetVNCDialer(dial func(context.Context) (*net.TCPConn, error)) {
+func (s *Server) SetVNCDialer(dial func(context.Context) (vnc.Desktop, error)) {
 	s.dialVNCBackend = dial
 }
 
-func (s *Server) dialVNC(ctx context.Context) (*net.TCPConn, error) {
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
+func (s *Server) dialVNC(ctx context.Context) (vnc.Desktop, error) {
 	if s.dialVNCBackend != nil {
+		// Allow a fresh capture process to start during a console handoff.
+		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
 		return s.dialVNCBackend(ctx)
 	}
-	var dialer net.Dialer
+	dialer := net.Dialer{Timeout: 3 * time.Second}
 	conn, err := dialer.DialContext(ctx, "tcp4", s.cfg.VNC.Listen)
 	if err != nil {
-		return nil, err
+		return vnc.Desktop{}, err
 	}
-	return conn.(*net.TCPConn), nil
+	return vnc.Desktop{TCPConn: conn.(*net.TCPConn)}, nil
 }
 
 func New(cfg config.Config, log *slog.Logger) (*Server, error) {
@@ -51,7 +56,7 @@ func New(cfg config.Config, log *slog.Logger) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: cfg, log: log, signer: signer, keys: keys}
+	s := &Server{cfg: cfg, log: log, signer: signer, keys: keys, Connections: &Connections{}}
 	if cfg.SFTP.Mode != "disabled" {
 		s.files, err = sftpfs.Open(cfg.SFTP)
 		if err != nil {
@@ -132,6 +137,7 @@ func (s *Server) serveConn(ctx context.Context, raw net.Conn, log *slog.Logger) 
 		return
 	}
 	transport.enable()
+	ctx = context.WithValue(ctx, peerKey{}, desktopPeer{conn.User(), raw.RemoteAddr().String(), conn.Permissions.Extensions["fingerprint"]})
 	log = log.With("user", conn.User())
 
 	var handlers sync.WaitGroup
@@ -144,6 +150,10 @@ func (s *Server) serveConn(ctx context.Context, raw net.Conn, log *slog.Logger) 
 		for req := range requests {
 			allowed := req.Type == "keepalive@openssh.com" && len(req.Payload) == 0
 			var payload []byte
+			if req.Type == "windows-managed-account@jumpvnc" && len(req.Payload) == 0 && s.Managed != nil {
+				allowed = true
+				payload = []byte(ManagedAccount)
+			}
 			if (req.Type == "sftp-location@jumpvnc" || req.Type == "sftp-location@sshvnc") && len(req.Payload) == 0 && s.files != nil {
 				allowed = true
 				payload, _ = json.Marshal(struct {

@@ -52,9 +52,12 @@ func (s *Server) ServeVNC(ctx context.Context, listener net.Listener) error {
 				return
 			}
 			defer backend.Close()
+			ctx, cancel := backend.Context(ctx)
+			defer cancel()
 			viewer := &idleConn{Conn: conn, timeout: time.Duration(s.cfg.SSH.Limits.IdleTimeoutSeconds) * time.Second}
 			viewer.enable()
-			s.relayVNC(ctx, viewer, backend, log)
+			ctx = context.WithValue(ctx, peerKey{}, desktopPeer{Address: conn.RemoteAddr().String()})
+			s.relayVNC(ctx, viewer, backend.TCPConn, log)
 		})
 	}
 }

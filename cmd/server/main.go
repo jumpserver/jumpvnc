@@ -31,8 +31,12 @@ func main() {
 	initializeService := flag.Bool("initialize-service", false, "initialize missing service credentials and configuration")
 	connectionInfo := flag.Bool("connection-info", false, "print connection settings and VNC password without starting the server")
 	flag.Parse()
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	ctx := context.Background()
+	if !*service {
+		var stop context.CancelFunc
+		ctx, stop = signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+		defer stop()
+	}
 
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil)).With("product", productName)
 	var err error
@@ -67,8 +71,8 @@ func main() {
 	}
 }
 
-func run(ctx context.Context, name string, log *slog.Logger, ready func()) error {
-	return runWithBackend(ctx, name, log, ready, func(ctx context.Context, cfg config.Config, log *slog.Logger) (vnc.Backend, error) {
+func run(ctx context.Context, name string, log *slog.Logger, ready func(), connections *sshgateway.Connections) error {
+	return runWithBackend(ctx, name, log, ready, connections, nil, func(ctx context.Context, cfg config.Config, log *slog.Logger) (vnc.Backend, error) {
 		if !cfg.SSH.AllowVNC {
 			return vnc.Backend{}, nil
 		}
@@ -77,7 +81,7 @@ func run(ctx context.Context, name string, log *slog.Logger, ready func()) error
 	})
 }
 
-func runWithBackend(ctx context.Context, name string, log *slog.Logger, ready func(), startBackend func(context.Context, config.Config, *slog.Logger) (vnc.Backend, error)) error {
+func runWithBackend(ctx context.Context, name string, log *slog.Logger, ready func(), connections *sshgateway.Connections, managed *sshgateway.ManagedLogin, startBackend func(context.Context, config.Config, *slog.Logger) (vnc.Backend, error)) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -94,6 +98,10 @@ func runWithBackend(ctx context.Context, name string, log *slog.Logger, ready fu
 		return err
 	}
 	defer gateway.Close()
+	if connections != nil {
+		gateway.Connections = connections
+	}
+	gateway.Managed = managed
 
 	listener, err := listenTCP(cfg.SSH.Listen)
 	if err != nil {

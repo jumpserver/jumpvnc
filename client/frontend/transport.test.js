@@ -7,10 +7,13 @@ function field(value = '') {
 }
 function fixture() {
   const elements = Object.fromEntries(['protocol', 'transport', 'host', 'port', 'user', 'sshTunnel', 'sshHost', 'sshPort', 'sshUser',
-    'jump', 'identity', 'knownHosts', 'hostKeyAlias', 'storedPassword', 'vncPassword', 'sshPassword', 'storedSSHPassword'].map(name => [name, field()]));
-  elements.sshTunnel.type = elements.storedPassword.type = elements.storedSSHPassword.type = 'checkbox';
-  const rows = Object.fromEntries(['data-vnc', 'data-ssh-tunnel', 'data-user', 'data-ssh'].map(name => [name, { hidden: false }]));
-  return { elements, rows, dataset: {}, querySelectorAll: selector => [rows[selector.slice(1, -1)]] };
+    'jump', 'identity', 'knownHosts', 'hostKeyAlias', 'storedPassword', 'vncPassword', 'sshPassword', 'storedSSHPassword',
+    'windowsAccount', 'windowsPassword', 'storedWindowsPassword'].map(name => [name, field()]));
+  elements.sshTunnel.type = elements.storedPassword.type = elements.storedSSHPassword.type = elements.storedWindowsPassword.type = 'checkbox';
+  const advanced = { open: false };
+  const rows = Object.fromEntries(['data-vnc', 'data-ssh-tunnel', 'data-user', 'data-ssh', 'data-windows', 'data-windows-keychain'].map(name => [name, { hidden: false }]));
+  return { elements, rows, dataset: {}, querySelector: selector => selector === '.connection-advanced' ? advanced : rows[selector.slice(1, -1)],
+    querySelectorAll: selector => [rows[selector.slice(1, -1)]] };
 }
 const form = fixture();
 const p = { transport: 'subsystem', host: 'desktop', port: 5922, user: 'vncuser', jump: '',
@@ -23,7 +26,17 @@ assert.equal(form.elements.sshHost.required, false);
 assert.equal(form.elements.sshHost.disabled, true);
 assert.equal(form.rows['data-user'].hidden, false);
 assert.equal(form.rows['data-ssh'].hidden, false);
-assert.deepEqual(profileFromForm(form), { ...p, vncHost: '', vncPassword: '', vncUsername: '', sshPassword: '', storedSSHPassword: false });
+assert.deepEqual(profileFromForm(form), { ...p, vncHost: '', vncPassword: '', vncUsername: '', sshPassword: '', storedSSHPassword: false,
+  windowsAccount: '', windowsPassword: '', storedWindowsPassword: false });
+
+// Windows and SSH identities can differ. Never carry a Windows password to a VNC tunnel.
+setProfile(form, { ...p, windowsAccount: '.\\alice', windowsPassword: 'one-use' });
+assert.equal(profileFromForm(form).user, 'vncuser');
+assert.equal(profileFromForm(form).windowsPassword, 'one-use');
+assert.equal(profileFromForm(form).vncPassword, '');
+assert.equal(profileFromForm(form).sshPassword, '');
+assert.equal(profileFromForm(form).storedWindowsPassword, false);
+assert.equal(desktopEndpoint(profileFromForm(form)), '.\\alice@desktop · SVNC 5922');
 
 // Selecting VNC resets the protocol port and needs no SSH credentials.
 form.elements.protocol.value = 'vnc';
@@ -39,6 +52,9 @@ assert.equal(plain.port, 5900);
 assert.equal(plain.identity, '');
 assert.equal(plain.user, '');
 assert.equal(plain.storedPassword, true);
+assert.equal(plain.windowsAccount, '');
+assert.equal(plain.windowsPassword, '');
+assert.equal(form.elements.windowsPassword.disabled, true);
 
 form.elements.sshTunnel.checked = true;
 syncTransport(form);
@@ -53,6 +69,7 @@ form.elements.port.value = '5905';
 form.elements.sshHost.value = 'bastion';
 form.elements.sshPort.value = '2222';
 let tunnel = profileFromForm(form);
+assert.equal(tunnel.windowsPassword, '');
 assert.equal(tunnel.transport, 'forward');
 assert.equal(tunnel.host, 'bastion');
 assert.equal(tunnel.port, 2222);

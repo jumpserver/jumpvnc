@@ -620,7 +620,7 @@ int wmain(int argc, wchar_t **argv) {
         if (parent && WaitForSingleObject(parent, 0) != WAIT_TIMEOUT)
             break;
         if (consoleCapture && WTSGetActiveConsoleSessionId() != options.consoleSession) {
-            fprintf(stderr, "console.changed: waiting for the service to restart in the active console session\n");
+            fprintf(stderr, "console.changed: closing the capture process for the previous session\n");
             break;
         }
         MSG message;

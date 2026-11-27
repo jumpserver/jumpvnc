@@ -11,6 +11,7 @@ import (
 	"golang.org/x/sys/windows/svc"
 
 	"jumpvnc/internal/config"
+	"jumpvnc/internal/sshgateway"
 	"jumpvnc/internal/vnc"
 )
 
@@ -44,11 +45,25 @@ func (s windowsService) Execute(_ []string, commands <-chan svc.ChangeRequest, s
 	ready := make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
-		done <- runWithBackend(ctx, s.configPath, log, func() { close(ready) }, func(ctx context.Context, cfg config.Config, log *slog.Logger) (vnc.Backend, error) {
+		connections := &sshgateway.Connections{}
+		listener, err := listenConnectionManager(ctx, connections)
+		if err != nil {
+			done <- err
+			return
+		}
+		defer listener.Close()
+		managed, err := loadManagedLogin(s.configPath)
+		if err != nil {
+			done <- err
+			return
+		}
+		done <- runWithBackend(ctx, s.configPath, log, func() { close(ready) }, connections, managed, func(ctx context.Context, cfg config.Config, log *slog.Logger) (vnc.Backend, error) {
 			if err := validateServiceBackend(cfg); err != nil {
 				return vnc.Backend{}, err
 			}
-			return vnc.StartConsole(ctx, cfg.VNC, log, s.configPath+".desktop.log")
+			return vnc.SuperviseConsole(ctx, func(ctx context.Context) (vnc.Backend, error) {
+				return vnc.StartConsole(ctx, cfg.VNC, log, s.configPath+".desktop.log")
+			}, log), nil
 		})
 	}()
 	ticker := time.NewTicker(time.Second)

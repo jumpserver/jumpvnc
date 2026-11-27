@@ -12,6 +12,9 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+
+	"jumpvnc/internal/sshgateway"
+	"jumpvnc/internal/vnc"
 )
 
 const (
@@ -59,6 +62,7 @@ const (
 	menuError
 	menuQuit
 	menuAdmin
+	menuConnections
 )
 
 var (
@@ -138,6 +142,7 @@ type windowsTray struct {
 	service        trayController
 	registration   *serviceRegistration
 	panel          managementWindow
+	connections    sshgateway.Connections
 	instance       uintptr
 	window         uintptr
 	icon           uintptr
@@ -149,7 +154,7 @@ type windowsTray struct {
 
 func runAgent(ctx context.Context, name string, noTray bool, log *slog.Logger) error {
 	if noTray || !interactiveDesktop() {
-		return run(ctx, name, log, nil)
+		return run(ctx, name, log, nil, nil)
 	}
 	registration, err := installedServiceRegistration()
 	if err == nil {
@@ -204,7 +209,7 @@ func runWindowsTray(ctx context.Context, name string, registration *serviceRegis
 			return err
 		}
 		log.Warn("tray.unavailable", "error", err)
-		return run(ctx, name, log, nil)
+		return run(ctx, name, log, nil, nil)
 	}
 	defer destroyWindow.Call(tray.window)
 	var stock stockIconInfo
@@ -219,6 +224,9 @@ func runWindowsTray(ctx context.Context, name string, registration *serviceRegis
 	defer func() {
 		if tray.panel.window != 0 {
 			destroyWindow.Call(tray.panel.window)
+			if tray.panel.remote.font != 0 {
+				gdi32.NewProc("DeleteObject").Call(tray.panel.remote.font)
+			}
 		}
 	}()
 
@@ -229,7 +237,7 @@ func runWindowsTray(ctx context.Context, name string, registration *serviceRegis
 		defer killTimer.Call(tray.window, servicePollTimer)
 	} else {
 		tray.service = newTrayService(ctx, func(ctx context.Context, ready func()) error {
-			err := run(ctx, name, log, ready)
+			err := run(ctx, name, log, ready, &tray.connections)
 			if err != nil && ctx.Err() == nil {
 				log.Error("agent.error", "error", err)
 			}
@@ -347,6 +355,9 @@ func (t *windowsTray) windowProc(hwnd uintptr, message uint32, wParam, lParam ui
 		return 0
 	case wmTimer:
 		if wParam == servicePollTimer && !t.closing {
+			if err := vnc.PollConsoleSwitch(); err != nil {
+				slog.Warn("windows_login.tray_lock_failed", "error", err)
+			}
 			t.service.update()
 			t.refreshStatus()
 			return 0
@@ -443,6 +454,7 @@ func (t *windowsTray) showMenu(x, y int32) {
 	}
 	add(0, "状态："+t.status(), false)
 	appendMenu.Call(menu, mfSeparator, 0, 0)
+	add(menuConnections, "远程连接", true)
 	add(menuOpen, "打开管理窗口", true)
 	appendMenu.Call(menu, mfSeparator, 0, 0)
 	add(menuStart, "启动服务", t.canConfigure() && t.service.canStart())
@@ -492,6 +504,10 @@ func (t *windowsTray) handleCommand(command, owner uintptr) {
 		} else {
 			t.quit()
 		}
+		return
+	case menuConnections:
+		t.openPanel()
+		t.showConnections(true)
 		return
 	case menuOpen:
 		t.openPanel()

@@ -27,11 +27,16 @@ func (s *Server) forward(ctx context.Context, incoming ssh.NewChannel, log *slog
 	}
 	target := net.JoinHostPort(req.Host, strconv.FormatUint(uint64(req.Port), 10))
 	log = log.With("target", target)
-	if !s.cfg.SSH.AllowVNC || target != s.cfg.VNC.Listen {
+	if s.Managed != nil || !s.cfg.SSH.AllowVNC || target != s.cfg.VNC.Listen {
 		incoming.Reject(ssh.Prohibited, "forwarding target not permitted")
 		log.Info("ssh.forward", "result", "denied", "reason", "target_policy")
 		return
 	}
+	if !s.desktops.enter() {
+		incoming.Reject(ssh.ResourceShortage, "console in use")
+		return
+	}
+	defer s.desktops.leave(false)
 
 	backend, err := s.dialVNC(ctx)
 	if err != nil {
@@ -40,6 +45,8 @@ func (s *Server) forward(ctx context.Context, incoming ssh.NewChannel, log *slog
 		return
 	}
 	defer backend.Close()
+	ctx, cancel := backend.Context(ctx)
+	defer cancel()
 	stop := context.AfterFunc(ctx, func() { backend.Close() })
 	defer stop()
 
@@ -54,7 +61,7 @@ func (s *Server) forward(ctx context.Context, incoming ssh.NewChannel, log *slog
 	go denyRequests(requests, done, log)
 
 	log.Info("ssh.forward", "result", "allowed")
-	s.relayVNC(ctx, channel, backend, log)
+	s.relayVNC(ctx, channel, backend.TCPConn, log)
 }
 
 // desktopStream supports half-close for both SSH channels and TCP viewers.
@@ -64,6 +71,19 @@ type desktopStream interface {
 }
 
 func (s *Server) relayVNC(ctx context.Context, channel desktopStream, backend *net.TCPConn, log *slog.Logger) {
+	s.relayDesktop(ctx, channel, backend, backend, log)
+}
+
+func (s *Server) relayDesktop(ctx context.Context, channel desktopStream, backend *net.TCPConn, download io.Reader, log *slog.Logger) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if s.Connections != nil {
+		peer, _ := ctx.Value(peerKey{}).(desktopPeer)
+		var proof rfbAuthProof
+		download = io.TeeReader(download, &proof)
+		untrack := s.Connections.track(peer, s.cfg.VNC.ViewOnly, &proof, cancel)
+		defer untrack()
+	}
 	stop := context.AfterFunc(ctx, func() { backend.Close(); channel.Close() })
 	defer stop()
 	start := time.Now()
@@ -82,7 +102,7 @@ func (s *Server) relayVNC(ctx context.Context, channel desktopStream, backend *n
 		}
 		toVNC <- transfer{n, err}
 	}()
-	downloaded, copyErr := io.Copy(channel, backend)
+	downloaded, copyErr := io.Copy(channel, download)
 	channel.CloseWrite()
 	if !closedNormally(copyErr) {
 		backend.Close()

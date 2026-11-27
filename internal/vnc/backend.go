@@ -22,7 +22,34 @@ import (
 type Backend struct {
 	Exited <-chan error
 	Stop   func()
-	Dial   func(context.Context) (*net.TCPConn, error)
+	Dial   func(context.Context) (Desktop, error)
+}
+
+// A connection and its login provider must belong to the same desktop process.
+type Desktop struct {
+	*net.TCPConn
+	Login    ConsoleLogin
+	lifetime context.Context
+}
+
+func (d Desktop) Context(parent context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(parent)
+	if d.lifetime == nil {
+		return ctx, cancel
+	}
+	stop := context.AfterFunc(d.lifetime, cancel)
+	if d.lifetime.Err() != nil {
+		cancel()
+	}
+	return ctx, func() { stop(); cancel() }
+}
+
+// ConsoleLogin is available only on a writable Windows physical console.
+type ConsoleLogin interface {
+	Available() bool
+	Active(account string) bool
+	Ready(account string) bool
+	Submit(ctx context.Context, account string, password []byte) error
 }
 
 // Start waits for the configured RFB endpoint. An external backend remains

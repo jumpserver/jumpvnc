@@ -24,7 +24,7 @@ import (
 
 // Desktop access works independently of SFTP, over either transport.
 func TestDesktopSessionWithoutSFTP(t *testing.T) {
-	for _, transport := range []string{"subsystem", "forward", "", "subsystem_denied"} {
+	for _, transport := range []string{"subsystem", "forward", "", "subsystem_denied", "windows_login", "windows_wrong_host", "windows_recovery"} {
 		t.Run(transport, func(t *testing.T) { testDesktopSession(t, transport) })
 	}
 }
@@ -51,12 +51,17 @@ func testDesktopSession(t *testing.T, transport string) {
 	}
 	defer listener.Close()
 	hosts := filepath.Join(dir, "known_hosts")
-	if err := os.WriteFile(hosts, []byte(knownhosts.Line([]string{listener.Addr().String()}, host.PublicKey())+"\n"), 0600); err != nil {
+	pinned := host.PublicKey()
+	if transport == "windows_wrong_host" {
+		pinned = identityFixture(t, "").PublicKey()
+	}
+	if err := os.WriteFile(hosts, []byte(knownhosts.Line([]string{listener.Addr().String()}, pinned)+"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	serverConfig := &ssh.ServerConfig{PublicKeyCallback: func(_ ssh.ConnMetadata, _ ssh.PublicKey) (*ssh.Permissions, error) { return nil, nil }}
 	serverConfig.AddHostKey(host)
 	var forwards, subsystems atomic.Int32
+	var loginRequests atomic.Int32
 	var handlers sync.WaitGroup
 	var workers sync.WaitGroup
 	workers.Add(1)
@@ -101,7 +106,27 @@ func testDesktopSession(t *testing.T, transport string) {
 					}
 					subsystems.Add(1)
 				}
-				go ssh.DiscardRequests(requests)
+				if transport == "windows_login" || transport == "windows_recovery" {
+					go func() {
+						for req := range requests {
+							loginRequests.Add(1)
+							ok := false
+							switch req.Type {
+							case "windows-login-supported@jumpvnc", "windows-login-ready@jumpvnc":
+								ok = len(req.Payload) == 0
+							case "windows-login-active@jumpvnc":
+								var check struct{ Account string }
+								ok = transport == "windows_recovery" && ssh.Unmarshal(req.Payload, &check) == nil && check.Account == "fixture-user"
+							case "windows-login@jumpvnc":
+								var creds struct{ Account, Password string }
+								ok = ssh.Unmarshal(req.Payload, &creds) == nil && creds.Account == "fixture-user" && creds.Password == "fixture-windows-password"
+							}
+							req.Reply(ok, nil)
+						}
+					}()
+				} else {
+					go ssh.DiscardRequests(requests)
+				}
 				stream.Write([]byte("RFB 003.008\n"))
 				io.Copy(stream, stream)
 			})
@@ -110,13 +135,26 @@ func testDesktopSession(t *testing.T, transport string) {
 	_, port, _ := net.SplitHostPort(listener.Addr().String())
 	portNumber, _ := strconv.Atoi(port)
 	profile := Profile{Host: "127.0.0.1", Port: portNumber, User: "desktop", Identity: identity, KnownHosts: hosts, Transport: transport, VNCPort: 5900}
-	if transport == "subsystem_denied" {
+	if transport == "subsystem_denied" || transport == "windows_recovery" {
 		profile.Transport = "subsystem"
+	}
+	if transport == "windows_login" || transport == "windows_wrong_host" {
+		profile.Transport, profile.WindowsAccount, profile.WindowsPassword = "subsystem", "fixture-user", "fixture-windows-password"
 	}
 	if profile.Transport == "subsystem" {
 		profile.VNCPort = 0
 	}
 	s, url, err := openSession(profile)
+	if transport == "windows_wrong_host" {
+		if s != nil {
+			s.close()
+		}
+		workers.Wait()
+		if err == nil || url != "" || subsystems.Load() != 0 {
+			t.Fatal("opened a Windows login channel on a host with a changed SSH key")
+		}
+		return
+	}
 	if transport == "subsystem_denied" {
 		if err == nil {
 			s.close()
@@ -157,6 +195,23 @@ func testDesktopSession(t *testing.T, transport string) {
 	got := make([]byte, len(payload))
 	if _, err := io.ReadFull(stream, got); err != nil || string(got) != string(payload) {
 		t.Fatalf("desktop data: %v, %v", got, err)
+	}
+	if transport == "windows_login" {
+		if loginRequests.Load() != 0 {
+			t.Fatal("sent a Windows login request before the Viewer signaled desktop readiness")
+		}
+		result, err := s.submitWindowsLogin()
+		if err != nil || result != "submitted" || loginRequests.Load() != 4 {
+			t.Fatalf("SSH channel login: %s, %v", result, err)
+		}
+	}
+	if transport == "windows_recovery" {
+		if _, err := s.submitWindowsLogin(); err == nil {
+			t.Fatal("recovery connection unexpectedly has a pending Windows credential")
+		}
+		if active, err := s.windowsDesktopActive("fixture-user"); err != nil || !active || loginRequests.Load() != 1 {
+			t.Fatalf("SSH account-only confirmation: active=%t err=%v requests=%d", active, err, loginRequests.Load())
+		}
 	}
 	if profile.Transport == "subsystem" {
 		if subsystems.Load() != 1 || forwards.Load() != 0 {

@@ -18,3 +18,10 @@ assert.equal(saved.user, 'entered');
 assert.equal(saved.storedPassword, true);
 assert.equal(saved.storedSSHPassword, true);
 assert.equal(profileToSave(base, { vncPassword: 'new-vnc' }).storedPassword, true);
+
+const windows = { ...base, user: 'gateway', windowsAccount: '.\\alice', storedPassword: true };
+assert.deepEqual(missingCredentials(windows), ['windowsPassword']);
+assert.deepEqual(missingCredentials({ ...windows, storedWindowsPassword: true }), []);
+assert.deepEqual(missingCredentials({ ...windows, transport: 'forward' }), []);
+assert.equal(profileToSave(windows, { windowsPassword: 'temporary' }).windowsPassword, '');
+assert.equal(profileToSave({ ...windows, storedWindowsPassword: true }, { windowsPassword: 'chosen' }).windowsPassword, 'chosen');

@@ -134,12 +134,14 @@ jobs:
       - name: Check cursor wire format and keyboard scan codes
         shell: pwsh
         run: |
-          cmake --build desktop/windows/build --config Release --target input-smoke cursor-smoke
+          cmake --build desktop/windows/build --config Release --target input-smoke cursor-smoke credential-provider-smoke
           if ($LASTEXITCODE -ne 0) { throw 'Cannot build cursor/input checks' }
           ./desktop/windows/build/Release/input-smoke.exe
           if ($LASTEXITCODE -ne 0) { throw 'Keyboard scan-code check failed' }
           ./desktop/windows/build/Release/cursor-smoke.exe
           if ($LASTEXITCODE -ne 0) { throw 'Cursor wire-format check failed' }
+          ./desktop/windows/build/credential_provider/Release/credential-provider-smoke.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Windows credential provider check failed' }
       - name: Package Windows server with matching sources and licenses
         shell: pwsh
         run: |
@@ -148,6 +150,7 @@ jobs:
           New-Item -ItemType Directory -Force "$root/bin", "$root/backends/windows", "$root/sources", "$root/licenses" | Out-Null
           Copy-Item bin/jumpvnc.exe "$root/bin/"
           Copy-Item desktop/windows/build/Release/svnc-desktop.exe "$root/backends/windows/"
+          Copy-Item desktop/windows/build/credential_provider/Release/jumpvnc-credential-provider.dll "$root/backends/windows/"
           Copy-Item configs, deployments, docs $root -Recurse
           Copy-Item README.md, LICENSE, THIRD_PARTY_NOTICES.md $root
           Copy-Item desktop/windows/README.md "$root/BACKEND.md"

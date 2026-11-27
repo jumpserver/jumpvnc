@@ -20,21 +20,32 @@ import (
 )
 
 type session struct {
-	id           string
-	started      time.Time
-	received     atomic.Int64
-	sent         atomic.Int64
-	rttMu        sync.RWMutex
-	rtt          time.Duration
-	rttAt        time.Time
-	ssh          *ssh.Client
-	files        *sftp.Client
-	fileLocation *FileLocation
-	bridge       *http.Server
-	ctx          context.Context
-	cancel       context.CancelFunc
-	closing      sync.Once
-	busy         atomic.Bool
+	id              string
+	started         time.Time
+	received        atomic.Int64
+	sent            atomic.Int64
+	rttMu           sync.RWMutex
+	rtt             time.Duration
+	rttAt           time.Time
+	ssh             *ssh.Client
+	desktopChannel  ssh.Channel // The session's accepted, host-key-verified VNC subsystem.
+	desktopAttached atomic.Bool
+	files           *sftp.Client
+	fileLocation    *FileLocation
+	bridge          *http.Server
+	ctx             context.Context
+	cancel          context.CancelFunc
+	closing         sync.Once
+	busy            atomic.Bool
+	loginMu         sync.Mutex
+	pendingLogin    *windowsLogin
+	managedAccount  string
+}
+
+type windowsLogin struct {
+	account  string
+	password []byte
+	expiry   *time.Timer
 }
 
 func openSession(p Profile) (*session, string, error) {
@@ -95,6 +106,7 @@ func openSession(p Profile) (*session, string, error) {
 func (s *session) close() {
 	s.closing.Do(func() {
 		s.cancel()
+		s.clearWindowsLogin()
 		if s.ssh != nil {
 			s.ssh.Close()
 		}
@@ -168,6 +180,7 @@ func (s *session) serveVNC(w http.ResponseWriter, r *http.Request, rawVNC io.Rea
 		return
 	}
 	defer conn.CloseNow()
+	s.desktopAttached.Store(true)
 	ctx, cancel := context.WithCancel(s.ctx)
 	defer cancel()
 	vnc := &measuredConn{Conn: rawVNC, received: &s.received, sent: &s.sent}
@@ -178,10 +191,12 @@ func (s *session) serveVNC(w http.ResponseWriter, r *http.Request, rawVNC io.Rea
 	done := make(chan error, 1)
 	go func() {
 		_, err := io.Copy(vnc, ws)
+		s.desktopAttached.Store(false)
 		done <- err
 		vnc.Close()
 	}()
 	_, err = io.Copy(ws, vnc)
+	s.desktopAttached.Store(false)
 	if err == nil || errors.Is(err, net.ErrClosed) {
 		conn.Close(websocket.StatusNormalClosure, "")
 	}
@@ -219,5 +234,123 @@ func (s *session) openDesktop(ctx context.Context, p Profile) (io.ReadWriteClose
 		}
 		return nil, errors.New("服务端拒绝 VNC subsystem；旧 Agent 可选择 VNC 协议并启用 SSH 隧道")
 	}
+	s.desktopChannel = channel
+	if p.WindowsAccount == "" {
+		timer := time.AfterFunc(sshTimeout, func() { s.ssh.Close() })
+		offered, data, err := s.ssh.SendRequest("windows-managed-account@jumpvnc", true, nil)
+		timer.Stop()
+		if err != nil {
+			channel.Close()
+			return nil, fmt.Errorf("检查服务端托管账号: %w", err)
+		}
+		if offered {
+			if string(data) != "JumpVNCUser" {
+				channel.Close()
+				return nil, errors.New("服务端返回了未知的托管账号")
+			}
+			p.WindowsPassword = ""
+			s.managedAccount = string(data)
+			p.WindowsAccount = s.managedAccount
+		}
+	}
+	if s.managedAccount != "" || (p.WindowsAccount != "" && p.WindowsPassword != "") {
+		s.loginMu.Lock()
+		// Release an unclaimed one-shot credential if the RFB handshake stalls.
+		s.pendingLogin = &windowsLogin{account: p.WindowsAccount, password: []byte(p.WindowsPassword),
+			expiry: time.AfterFunc(time.Minute, s.clearWindowsLogin)}
+		s.loginMu.Unlock()
+	}
 	return channel, nil
+}
+
+func (s *session) takeWindowsLogin() *windowsLogin {
+	s.loginMu.Lock()
+	defer s.loginMu.Unlock()
+	login := s.pendingLogin
+	s.pendingLogin = nil
+	if login != nil {
+		login.expiry.Stop()
+	}
+	return login
+}
+
+func (s *session) clearWindowsLogin() {
+	if login := s.takeWindowsLogin(); login != nil {
+		clear(login.password)
+	}
+}
+
+// Called after noVNC's connect event. The server checks the RFB authentication
+// result on this same SSH channel before evaluating the account.
+func (s *session) windowsDesktopActive(account string) (bool, error) {
+	if s.ctx.Err() != nil || s.desktopChannel == nil || !s.desktopAttached.Load() {
+		return false, errors.New("原桌面连接已关闭")
+	}
+	if err := validateWindowsAccount(account); err != nil {
+		return false, err
+	}
+	timeout := time.AfterFunc(sshTimeout, s.close)
+	defer timeout.Stop()
+	active, err := s.desktopChannel.SendRequest("windows-login-active@jumpvnc", true, ssh.Marshal(struct{ Account string }{account}))
+	if err != nil || s.ctx.Err() != nil || !s.desktopAttached.Load() {
+		return false, errors.New("无法确认 Windows 控制台状态")
+	}
+	return active, nil
+}
+
+func (s *session) submitWindowsLogin() (string, error) {
+	login := s.takeWindowsLogin()
+	if login == nil {
+		return "", errors.New("当前连接无可用的 Windows 登录请求，请重新连接")
+	}
+	defer clear(login.password)
+	if s.ctx.Err() != nil {
+		return "", errors.New("原桌面连接已关闭")
+	}
+	// A channel request has no deadline and closing just the channel still
+	// needs a peer acknowledgement; close the transport on a stalled exchange.
+	timeout := time.AfterFunc(35*time.Second, s.close)
+	defer timeout.Stop()
+	channel := s.desktopChannel
+	if channel == nil {
+		return "", errors.New("原桌面连接已关闭")
+	}
+	supported, err := channel.SendRequest("windows-login-supported@jumpvnc", true, nil)
+	if err != nil || !supported {
+		return "", errors.New("这台服务端未提供 Windows 登录，请检查登录组件及桌面权限")
+	}
+	active, err := s.windowsDesktopActive(login.account)
+	if err != nil {
+		return "", errors.New("无法确认 Windows 控制台状态")
+	}
+	if active {
+		return "active", nil
+	}
+	ready, err := channel.SendRequest("windows-login-ready@jumpvnc", true, nil)
+	if err != nil || !ready {
+		return "", errors.New("当前控制台未就绪。若由其他用户占用，请检查该用户是否允许切换到此账号，以及 Windows 快速用户切换策略。")
+	}
+	request := "windows-managed-login@jumpvnc"
+	var payload []byte
+	if s.managedAccount == "" {
+		request = "windows-login@jumpvnc"
+		payload = ssh.Marshal(struct {
+			Account  string
+			Password []byte
+		}{login.account, login.password})
+	}
+	defer clear(payload)
+	if s.ctx.Err() != nil || !s.desktopAttached.Load() {
+		return "", errors.New("原桌面连接已关闭")
+	}
+	ok, err := channel.SendRequest(request, true, payload)
+	if err != nil {
+		// After attempting the one-shot submit, a lost reply leaves the Windows
+		// result ambiguous. Recovery must only confirm the requested account.
+		return "unconfirmed", nil
+	}
+	if !ok {
+		return "", errors.New("Windows 登录未完成。请检查账号凭据、控制台用户的 JumpVNC 托盘和服务端 windows_login 日志。")
+	}
+	return "submitted", nil
 }

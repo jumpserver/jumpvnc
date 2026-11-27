@@ -139,6 +139,7 @@ func (v *Viewer) Connect(ctx context.Context, p Profile) (Connection, error) {
 		return Connection{}, err
 	}
 	wantedPassword, wantedSSH := p.StoredPassword, p.StoredSSHPassword
+	rememberWindows := p.StoredWindowsPassword && p.WindowsPassword != ""
 	p, err = state.store.resolvePasswords(state.server.ID, p)
 	if err != nil {
 		return Connection{}, err
@@ -150,6 +151,9 @@ func (v *Viewer) Connect(ctx context.Context, p Profile) (Connection, error) {
 	if wantedSSH && !p.StoredSSHPassword && p.SSHPassword == "" {
 		missing = append(missing, "sshPassword")
 	}
+	if p.WindowsAccount != "" && p.WindowsPassword == "" {
+		missing = append(missing, "windowsPassword")
+	}
 	if len(missing) != 0 {
 		return Connection{Auth: &AuthChallenge{Fields: missing, Message: "未找到保存的密码，请重新填写"}}, nil
 	}
@@ -157,6 +161,12 @@ func (v *Viewer) Connect(ctx context.Context, p Profile) (Connection, error) {
 	if _, closed := v.caller(ctx); closed != nil {
 		state.desktop.Disconnect()
 		return Connection{}, closed
+	}
+	if err == nil && connection.ID != "" && rememberWindows {
+		if err := state.store.rememberWindowsPassword(state.server.ID, p); err != nil {
+			state.desktop.Disconnect()
+			return Connection{}, err
+		}
 	}
 	return connection, err
 }
@@ -168,6 +178,39 @@ func (v *Viewer) Disconnect(ctx context.Context) error {
 	}
 	state.desktop.Disconnect()
 	return nil
+}
+
+func (d *Desktop) sessionByID(id string) (*session, error) {
+	s, err := d.active()
+	if err != nil || s.id != id {
+		return nil, errors.New("原桌面连接已关闭")
+	}
+	return s, nil
+}
+
+func (v *Viewer) callerSession(ctx context.Context, id string) (*session, error) {
+	state, err := v.caller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return state.desktop.sessionByID(id)
+}
+
+// WindowsLogin is called after noVNC reports a successful RFB connection.
+func (v *Viewer) WindowsLogin(ctx context.Context, id string) (string, error) {
+	s, err := v.callerSession(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	return s.submitWindowsLogin()
+}
+
+func (v *Viewer) WindowsDesktopActive(ctx context.Context, id, account string) (bool, error) {
+	s, err := v.callerSession(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	return s.windowsDesktopActive(account)
 }
 func (v *Viewer) Performance(ctx context.Context, id string) (Performance, error) {
 	state, err := v.caller(ctx)

@@ -97,6 +97,7 @@ type managementWindow struct {
 	rootEnabled                                             bool
 	passwordRevealed                                        bool
 	classRegistered                                         bool
+	remote                                                  remotePage
 }
 
 func (t *windowsTray) openPanel() {
@@ -188,7 +189,16 @@ func (t *windowsTray) createPanel() error {
 		{"BUTTON", "高级配置", wsTabStop, 0, 20, 660, 100, 28, menuConfig, &t.panel.configEdit},
 		{"BUTTON", "复制连接信息", wsTabStop, 0, 130, 660, 136, 28, idConnectionCopy, &t.panel.connectionCopy},
 		{"BUTTON", "查看日志", wsTabStop, 0, 276, 660, 100, 28, menuError, &t.panel.lastError},
+		{"BUTTON", "远程连接", wsTabStop, 0, 386, 660, 100, 28, menuConnections, nil},
 		{"BUTTON", "关闭窗口", wsTabStop, 0, 500, 660, 100, 28, idCancel, nil},
+		{"STATIC", "", ssNoPrefix, 0, 20, 24, 580, 52, idRemoteTitle, &t.panel.remote.title},
+		{"STATIC", "", ssNoPrefix, 0, 20, 76, 580, 42, idRemoteDetail, &t.panel.remote.detail},
+		{"STATIC", "桌面连接", ssNoPrefix, 0, 22, 149, 240, 24, idRemoteLabel, nil},
+		{"BUTTON", "断开全部", wsTabStop, 0, 480, 140, 120, 32, idRemoteAll, &t.panel.remote.all},
+		{"LISTBOX", "", wsTabStop | wsVScroll | 1 | 0x0100, wsExClientEdge, 20, 184, 580, 345, idRemoteList, &t.panel.remote.list},
+		{"STATIC", "", ssNoPrefix, 0, 20, 545, 426, 52, idRemoteSelected, &t.panel.remote.info},
+		{"BUTTON", "断开所选连接", wsTabStop, 0, 458, 539, 142, 32, idRemoteDisconnect, &t.panel.remote.disconnect},
+		{"BUTTON", "返回设置", wsTabStop, 0, 20, 660, 110, 28, idRemoteBack, nil},
 	}
 	font, _, _ := getStockObject.Call(defaultGUIFont)
 	for _, control := range controls {
@@ -201,6 +211,20 @@ func (t *windowsTray) createPanel() error {
 			return fmt.Errorf("create %s control: %w", control.class, err)
 		}
 		sendMessage.Call(child, wmSetFont, font, 0)
+		if control.id >= idRemoteTitle && control.id <= idRemoteBack {
+			t.panel.remote.controls = append(t.panel.remote.controls, child)
+			showWindow.Call(child, swHide)
+		} else {
+			t.panel.remote.settings = append(t.panel.remote.settings, child)
+		}
+		if control.id == idRemoteTitle {
+			family, _ := windows.UTF16PtrFromString("Segoe UI")
+			titleFont, _, _ := gdi32.NewProc("CreateFontW").Call(28, 0, 0, 0, 600, 0, 0, 0, 1, 0, 0, 5, 0, uintptr(unsafe.Pointer(family)))
+			if titleFont != 0 {
+				t.panel.remote.font = titleFont
+				sendMessage.Call(child, wmSetFont, titleFont, 0)
+			}
+		}
 		if control.handle != nil {
 			*control.handle = child
 		}
@@ -247,6 +271,20 @@ func setControlEnabled(control uintptr, enabled bool) {
 
 func (t *windowsTray) panelProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 	switch message {
+	case wmTimer:
+		if wParam == remoteTimer && t.panel.remote.visible {
+			t.refreshRemote(nil)
+			return 0
+		}
+	case 0x0138: // WM_CTLCOLORSTATIC
+		if lParam != 0 && (lParam == t.panel.remote.title || lParam == t.panel.remote.detail) {
+			const blue = 0xbb651a
+			gdi32.NewProc("SetTextColor").Call(wParam, 0xffffff)
+			gdi32.NewProc("SetBkColor").Call(wParam, blue)
+			gdi32.NewProc("SetDCBrushColor").Call(wParam, blue)
+			brush, _, _ := getStockObject.Call(18)
+			return brush
+		}
 	case wmClose:
 		t.closePanel()
 		return 0
@@ -271,10 +309,22 @@ func (t *windowsTray) panelProc(hwnd uintptr, message uint32, wParam, lParam uin
 			t.panel.updateRootSave()
 			return 0
 		}
+		if t.panel.remote.visible && command == idRemoteList && notification == 1 {
+			t.updateRemoteSelection()
+			return 0
+		}
 		if notification != 0 {
 			return 0
 		}
 		switch command {
+		case menuConnections:
+			t.showConnections(true)
+		case idRemoteBack:
+			t.showConnections(false)
+		case idRemoteDisconnect, idRemoteAll:
+			if t.panel.remote.visible {
+				t.disconnectRemote(command == idRemoteAll)
+			}
 		case idCancel:
 			t.closePanel()
 		case idRootBrowse:

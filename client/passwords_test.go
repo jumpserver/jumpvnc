@@ -203,3 +203,86 @@ func TestMissingAccountAndDeletedPasswordCanBePrompted(t *testing.T) {
 		t.Fatal("deleted keychain item did not become a credential request")
 	}
 }
+
+func TestWindowsPasswordIsOptInAndScopedToAccount(t *testing.T) {
+	store := testLibrary(t)
+	server := testServer()
+	server.Profile.Transport, server.Profile.VNCPort = "subsystem", 0
+	server.Profile.StoredPassword = true
+	server.Profile.WindowsAccount = `.\ops`
+	server.Profile.WindowsPassword = "test-windows-password"
+	lib, err := store.saveServer(server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server = lib.Servers[0]
+	p := server.Profile
+	saved, err := store.passwords.Get(p.PasswordRef)
+	if err != nil || p.WindowsPassword != "" || p.StoredWindowsPassword || saved.Windows != "" {
+		t.Fatal("stored a non-opted-in Windows password")
+	}
+
+	p.WindowsPassword = "test-windows-password"
+	p.StoredWindowsPassword = true
+	if err := store.rememberWindowsPassword(server.ID, p); err != nil {
+		t.Fatal(err)
+	}
+	lib, err = store.read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	server = lib.Servers[0]
+	p = server.Profile
+	data, err := os.ReadFile(store.filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	export, err := encodeConnectionFile(server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(data, []byte("test-windows-password")) || bytes.Contains(export, []byte("windows")) || p.WindowsPassword != "" {
+		t.Fatal("plaintext or private login metadata escaped the keychain")
+	}
+	original, err := store.resolvePasswords(server.ID, p)
+	if err != nil || original.WindowsPassword != "test-windows-password" || original.VNCPassword == "" {
+		t.Fatal("login password mixup or failed to remember")
+	}
+	for _, edit := range []func(*Profile){
+		func(p *Profile) { p.WindowsAccount = `.\other` },
+		func(p *Profile) { p.Host = "other.example" },
+		func(p *Profile) { p.Identity = "another-key" },
+		func(p *Profile) { p.KnownHosts = "another-trust-record" },
+	} {
+		copy := p
+		edit(&copy)
+		resolved, err := store.resolvePasswords(server.ID, copy)
+		if err != nil || resolved.WindowsPassword != "" || resolved.StoredWindowsPassword {
+			t.Fatal("released Windows password to different account, host or key")
+		}
+	}
+	mem := store.passwords.(*memoryPasswordStore)
+	mem.failSet = true
+	copy := p
+	copy.WindowsPassword = "replace-fixture"
+	if err := store.rememberWindowsPassword(server.ID, copy); err == nil {
+		t.Fatal("silently ignored keychain failure")
+	}
+	mem.failSet = false
+	if got, err := store.resolvePasswords(server.ID, p); err != nil || got.WindowsPassword != original.WindowsPassword {
+		t.Fatal("failed update destroyed previous credential")
+	}
+	copy.Host = "edited.example"
+	if err := store.rememberWindowsPassword(server.ID, copy); err == nil {
+		t.Fatal("saved a password for a different endpoint")
+	}
+	server.Profile.WindowsAccount = `.\other`
+	lib, err = store.saveServer(server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.resolvePasswords(server.ID, lib.Servers[0].Profile)
+	if err != nil || got.WindowsPassword != "" || got.StoredWindowsPassword || got.VNCPassword != original.VNCPassword {
+		t.Fatal("changing Windows user must drop only the previous Windows password")
+	}
+}

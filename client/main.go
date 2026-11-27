@@ -25,13 +25,14 @@ type Desktop struct {
 }
 
 type Connection struct {
-	Auth         *AuthChallenge    `json:"auth,omitempty"`
-	HostKey      *HostKeyChallenge `json:"hostKey,omitempty"`
-	ID           string            `json:"id"`
-	URL          string            `json:"url"`
-	Password     string            `json:"password,omitempty"`
-	Files        bool              `json:"files"`
-	FileLocation *FileLocation     `json:"fileLocation,omitempty"`
+	ManagedAccount string            `json:"managedAccount,omitempty"`
+	Auth           *AuthChallenge    `json:"auth,omitempty"`
+	HostKey        *HostKeyChallenge `json:"hostKey,omitempty"`
+	ID             string            `json:"id"`
+	URL            string            `json:"url"`
+	Password       string            `json:"password,omitempty"`
+	Files          bool              `json:"files"`
+	FileLocation   *FileLocation     `json:"fileLocation,omitempty"`
 }
 
 func (*Desktop) Defaults() Profile { return defaultProfile() }
@@ -63,7 +64,7 @@ func (d *Desktop) Connect(p Profile) (Connection, error) {
 		return Connection{}, err
 	}
 	d.current = s
-	return Connection{ID: s.id, URL: url, Password: password, Files: s.files != nil, FileLocation: s.fileLocation}, nil
+	return Connection{ManagedAccount: s.managedAccount, ID: s.id, URL: url, Password: password, Files: s.files != nil, FileLocation: s.fileLocation}, nil
 }
 
 func (d *Desktop) Disconnect() {

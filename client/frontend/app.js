@@ -1,4 +1,4 @@
-import { syncTransport, setProfile, profileFromForm, desktopEndpoint } from './transport.js';
+import { bindConnectionForm, syncTransport, setProfile, profileFromForm, desktopEndpoint } from './transport.js';
 import { missingCredentials, promptCredentials, cancelCredentials, profileToSave } from './auth.js';
 import RFB from '@novnc/novnc';
 import { encodings } from './node_modules/@novnc/novnc/core/encodings.js';
@@ -11,6 +11,7 @@ import { nativeRFB } from './native-rfb.js';
 import { videoRFB } from './video-rfb.js';
 import { fileLocationPath, fileLocationNote } from './file-location.js';
 import { clipboardSync } from './clipboard.js';
+import { displayProfile, windowsLoginTransition, waitForSignal, recoverWindowsDisplay, authorizeRecoveredDesktop } from './windows-recovery.js';
 
 installH264AccessUnits(H264Parser);
 const MeasuredRFB = measureRFB(nativeRFB(videoRFB(RFB, encodings, supportsWebCodecsH264Decode)));
@@ -18,6 +19,7 @@ const MeasuredRFB = measureRFB(nativeRFB(videoRFB(RFB, encodings, supportsWebCod
 const $ = (id) => document.getElementById(id);
 const call = (method, ...args) => window.mygo.call('Viewer.' + method, ...args);
 const form = $('connect-form');
+bindConnectionForm(form);
 const filesPanel = $('files-panel');
 const list = $('file-list');
 const diagnostics = $('session-diagnostics');
@@ -28,6 +30,7 @@ let connected = false;
 let filesAvailable = false;
 let connecting = false;
 let disconnecting = false;
+let recovery;
 let profileReady = false;
 let savingConnection = false;
 let editingSnapshot;
@@ -210,9 +213,11 @@ function errorMessage(error) {
 }
 
 function syncControls() {
-  $('connect').disabled = !profileReady || savingConnection || connecting || connected || disconnecting;
+  $('connect').disabled = !profileReady || savingConnection || connecting || connected || disconnecting || !!recovery;
   $('connect').textContent = connecting ? '连接中…' : '连接';
-  $('state-actions').hidden = !profileReady || savingConnection || connecting || connected || disconnecting;
+  $('state-actions').hidden = !profileReady || savingConnection || connecting || connected || disconnecting || !!recovery;
+  $('cancel-recovery').hidden = !recovery;
+  $('cancel-recovery').disabled = !!recovery?.signal.aborted;
   $('disconnect').hidden = !connected && !connecting;
   $('disconnect').disabled = disconnecting;
   $('refresh').disabled = !connected || !filesAvailable;
@@ -222,7 +227,7 @@ function syncControls() {
   $('files-toggle').disabled = !connected || !filesAvailable;
   $('clipboard-toggle').disabled = !connected;
   $('send-secure-attention').disabled = !connected;
-  $('settings-offline').hidden = connected || connecting;
+  $('settings-offline').hidden = connected || connecting || !!recovery;
   $('transfer-dot').hidden = !transferring;
   $('drop-label').textContent = connected && !filesAvailable ? '文件传输不可用' : transferring ? '正在传输文件' : '将文件拖到这里上传';
 }
@@ -279,6 +284,7 @@ function updateCredentialFields(profile) {
   user.value = profile.user;
   form.elements.vncPassword.value = profile.vncPassword || '';
   form.elements.sshPassword.value = profile.sshPassword || '';
+  form.elements.windowsPassword.value = profile.windowsPassword || '';
   form.elements.vncUsername.value = profile.vncUsername || '';
   form.elements.storedPassword.checked = profile.storedPassword;
   form.elements.storedSSHPassword.checked = profile.storedSSHPassword;
@@ -286,7 +292,7 @@ function updateCredentialFields(profile) {
 
 async function connect(event) {
   event?.preventDefault();
-  if (!profileReady || savingConnection || connecting || connected || disconnecting) return;
+  if (!profileReady || savingConnection || connecting || connected || disconnecting || recovery) return;
   if (!form.checkValidity()) {
     status('需要补充连接信息');
     if (!$('connection-dialog').open) showConnectionForm();
@@ -298,6 +304,7 @@ async function connect(event) {
     $('connection-dialog').close();
   }
   showConnectionError('');
+  const revision = connectionRevision;
   const profile = connectOptions();
   connecting = true;
   showPanel(null);
@@ -314,7 +321,7 @@ async function connect(event) {
     const confirmedHosts = new Set();
     while (connecting && !disconnecting) {
       connection = await call('Connect', profile);
-      if (disconnecting || !connecting) return;
+      if (disconnecting || !connecting || revision !== connectionRevision) return;
       if (connection.auth) {
         if (!await promptCredentials(profile, connection.auth.fields, connection.auth.message, saveProfile)) { await disconnect(); return; }
         updateCredentialFields(profile);
@@ -337,91 +344,131 @@ async function connect(event) {
       profile.trustHost = identity.host;
       confirmedHosts.add(identity.host);
     }
-    if (disconnecting || !connecting) return;
-    filesAvailable = connection.files;
-    fileLocation = connection.fileLocation;
-    updateFileLocation();
-    status('正在连接桌面', 'connecting');
-    $('vnc-screen').hidden = false;
-    const rfb = new MeasuredRFB($('vnc-screen'), connection.url, {
-      shared: true,
-      credentials: connection.password ? { username: profile.vncUsername, password: connection.password } : {},
-    });
-    client = rfb;
-    let desktopName = '';
-    const updateEndpoint = () => {
-      if (client !== rfb) return;
-      const endpoint = desktopEndpoint(profile);
-      const host = profile.transport === 'forward' ? profile.vncHost || '127.0.0.1' : profile.host;
-      const port = profile.transport === 'forward' ? profile.vncPort : profile.port;
-      $('diag-endpoint').textContent = `${host.includes(':') && !host.startsWith('[') ? '[' + host + ']' : host}:${port}`;
-      $('desktop-host').title = `${profile.jump ? profile.jump + ' · ' : ''}${endpoint}${desktopName ? ' · ' + desktopName : ''}`;
-      $('connection-endpoint').textContent = `${profile.jump ? profile.jump + ' → ' : ''}${endpoint}`;
-      $('connection-backend').textContent = desktopName || '等待服务端桌面名称';
-    };
-    rfb.addEventListener('desktopname', ({ detail }) => {
-      desktopName = detail.name;
-      updateEndpoint();
-    });
-    applyQuality(rfb, $('quality-profile').value);
-    rfb.scaleViewport = true;
-    rfb.addEventListener('clipboard', ({ detail }) => {
-      if (client !== rfb) return;
-      if (clipboard) clipboard.receive(detail.text).catch(clipboardError);
-      else $('clipboard-text').value = detail.text;
-    });
-    rfb.addEventListener('clipboardcapabilities', () => {
-      if (client === rfb) clipboard?.sync(true).catch(clipboardError);
-    });
-    rfb.addEventListener('connect', () => {
-      if (client !== rfb) return;
-      connecting = false;
-      connected = true;
-      $('connection-metrics').hidden = false;
-      updateEndpoint();
-      $('connection-view').hidden = true;
-      form.elements.vncPassword.value = '';
-      form.elements.sshPassword.value = '';
-      status('已连接', 'connected');
-      rfb.focus();
-      syncControls();
-      listMessage(filesAvailable ? '打开文件管理后显示远程文件' : '文件传输不可用，桌面仍可正常使用');
-      startPerformance(rfb, connection.id, profile.transport);
-      startClipboard(rfb, connection.id);
-    });
-    rfb.addEventListener('securityfailure', () => {
-      if (client === rfb) {
-        form.elements.vncPassword.value = '';
-        form.elements.storedPassword.checked = false;
-        disconnect('VNC 认证失败，请重新填写密码');
-      }
-    });
-    rfb.addEventListener('credentialsrequired', async ({ detail }) => {
-      if (client !== rfb) return;
-      const fields = detail.types.map(type => ({ username: 'vncUsername', password: 'vncPassword' })[type]).filter(Boolean);
-      if (!fields.length) { await disconnect('服务器要求的认证方式暂不支持'); return; }
-      const accepted = await promptCredentials(profile, fields, '', saveProfile);
-      if (client !== rfb) return;
-      if (!accepted) { await disconnect(); return; }
-      updateCredentialFields(profile);
-      const credentials = {};
-      if (fields.includes('vncUsername')) credentials.username = profile.vncUsername;
-      if (fields.includes('vncPassword')) credentials.password = profile.vncPassword;
-      rfb.sendCredentials(credentials);
-    });
-    rfb.addEventListener('disconnect', (event) => {
-      if (client !== rfb) return;
-      disconnect(rfb.failureReason || (connected && event.detail.clean ? '远程桌面已关闭' : '无法继续连接远程桌面，请重试'));
-    });
+    if (disconnecting || !connecting || revision !== connectionRevision) return;
+    attachDesktop(profile, connection);
   } catch (err) {
-    if (!disconnecting && connecting) await disconnect(errorMessage(err));
+    if (revision === connectionRevision && !disconnecting && connecting) await disconnect(errorMessage(err));
+  } finally {
+    profile.windowsPassword = '';
+    if (revision === connectionRevision) form.elements.windowsPassword.value = '';
   }
 }
 
-async function disconnect(message = '') {
-  if (disconnecting) return;
-  disconnecting = true;
-  connectionRevision++;
+function attachDesktop(profile, connection, resume) {
+  const screen = $('vnc-screen');
+  const signal = resume?.signal;
+  const account = resume?.account || connection.managedAccount || (profile.transport === 'subsystem' && profile.windowsAccount);
+  screen.hidden = !!account;
+  status(resume ? '正在恢复 Windows 桌面' : '正在连接桌面', 'connecting');
+  const rfb = new MeasuredRFB(screen, connection.url, {
+    shared: true,
+    credentials: connection.password ? { username: profile.vncUsername, password: connection.password } : {},
+  });
+  if (account) rfb.viewOnly = true;
+  client = rfb;
+  let transition;
+  const current = () => client === rfb && !signal?.aborted;
+  let desktopName = '';
+  const updateEndpoint = () => {
+    if (client !== rfb) return;
+    const endpoint = desktopEndpoint({ ...profile, windowsAccount: account });
+    const host = profile.transport === 'forward' ? profile.vncHost || '127.0.0.1' : profile.host;
+    const port = profile.transport === 'forward' ? profile.vncPort : profile.port;
+    $('diag-endpoint').textContent = `${host.includes(':') && !host.startsWith('[') ? '[' + host + ']' : host}:${port}`;
+    $('desktop-host').title = `${profile.jump ? profile.jump + ' · ' : ''}${endpoint}${desktopName ? ' · ' + desktopName : ''}`;
+    $('connection-endpoint').textContent = `${profile.jump ? profile.jump + ' → ' : ''}${endpoint}`;
+    $('connection-backend').textContent = desktopName || '等待服务端桌面名称';
+  };
+  rfb.addEventListener('desktopname', ({ detail }) => {
+    desktopName = detail.name;
+    if (!account || connected) updateEndpoint();
+  });
+  applyQuality(rfb, $('quality-profile').value);
+  rfb.scaleViewport = true;
+  rfb.addEventListener('clipboard', ({ detail }) => {
+    if (!current() || !connected) return;
+    if (clipboard) clipboard.receive(detail.text).catch(clipboardError);
+    else $('clipboard-text').value = detail.text;
+  });
+  rfb.addEventListener('clipboardcapabilities', () => {
+    if (current() && connected) clipboard?.sync(true).catch(clipboardError);
+  });
+  const showDesktop = () => {
+    if (!current()) return;
+    rfb.viewOnly = false;
+    filesAvailable = connection.files;
+    fileLocation = connection.fileLocation;
+    updateFileLocation();
+    screen.hidden = false;
+    connecting = false;
+    connected = true;
+    $('connection-metrics').hidden = false;
+    updateEndpoint();
+    $('connection-view').hidden = true;
+    form.elements.vncPassword.value = '';
+    form.elements.sshPassword.value = '';
+    status('已连接', 'connected');
+    rfb.focus();
+    syncControls();
+    listMessage(filesAvailable ? '打开文件管理后显示远程文件' : '文件传输不可用，桌面仍可正常使用');
+    startPerformance(rfb, connection.id, profile.transport);
+    startClipboard(rfb, connection.id);
+  };
+  const restore = () => restoreAfterWindowsLogin(transition, account, displayProfile(profile, profile.vncPassword || connection.password));
+  rfb.addEventListener('securityfailure', () => {
+    if (current() && (!resume || connected)) {
+      form.elements.vncPassword.value = '';
+      form.elements.storedPassword.checked = false;
+      disconnect('VNC 认证失败，请重新填写密码');
+    }
+  });
+  rfb.addEventListener('credentialsrequired', async ({ detail }) => {
+    if (!current() || (resume && !connected)) return;
+    const fields = detail.types.map(type => ({ username: 'vncUsername', password: 'vncPassword' })[type]).filter(Boolean);
+    if (!fields.length) { await disconnect('服务器要求的认证方式暂不支持'); return; }
+    const accepted = await promptCredentials(profile, fields, '', saveProfile);
+    if (client !== rfb) return;
+    if (!accepted) { await disconnect(); return; }
+    updateCredentialFields(profile);
+    const credentials = {};
+    if (fields.includes('vncUsername')) credentials.username = profile.vncUsername;
+    if (fields.includes('vncPassword')) credentials.password = profile.vncPassword;
+    rfb.sendCredentials(credentials);
+  });
+  rfb.addEventListener('disconnect', (event) => {
+    if (!current() || (resume && !connected)) return;
+    if (transition?.mayRecover(rfb.failureReason)) {
+      restore();
+      return;
+    }
+    disconnect(rfb.failureReason || (connected && event.detail.clean ? '远程桌面已关闭' : '无法继续连接远程桌面，请重试'));
+  });
+  if (resume) {
+    return authorizeRecoveredDesktop(rfb, signal, () => {
+      status('正在确认 Windows 桌面账号 ' + account, 'connecting');
+      return call('WindowsDesktopActive', connection.id, resume.account);
+    }, resume.remaining).then(showDesktop);
+  }
+  rfb.addEventListener('connect', async () => {
+    if (!current()) return;
+    if (!account) return showDesktop();
+    status('正在确认 Windows 桌面账号 ' + account, 'connecting');
+    try {
+      transition = windowsLoginTransition(call('WindowsLogin', connection.id));
+      const outcome = await transition.result;
+      if (!current()) return;
+      if (outcome === 'active') return showDesktop();
+      // A submission is only an acknowledgement from LogonUI. Older servers
+      // answer account checks on a fresh display channel after a submission.
+      if (outcome === 'submitted' || outcome === 'unconfirmed') return restore();
+      throw new Error('服务端未确认 Windows 登录结果');
+    } catch (err) {
+      if (current()) await disconnect('无法打开 ' + account + ' 的桌面。' + errorMessage(err));
+    }
+  }, { once: true });
+}
+
+function resetDesktop(message = '') {
   connecting = false;
   connected = false;
   filesAvailable = false;
@@ -436,10 +483,12 @@ async function disconnect(message = '') {
   if ($('drop-dialog').open) $('drop-dialog').close();
   if ($('clipboard-dialog').open) $('clipboard-dialog').close();
   $('clipboard-text').value = '';
+  form.elements.windowsPassword.value = '';
   const rfb = client;
   client = undefined;
   rfb?.disconnect();
   $('vnc-screen').hidden = true;
+  $('vnc-screen').replaceChildren();
   $('connection-view').hidden = false;
   $('desktop-host').title = '';
   $('connection-endpoint').textContent = '尚未连接';
@@ -447,13 +496,54 @@ async function disconnect(message = '') {
   status('未连接');
   showFilesOffline();
   showConnectionError(message);
+}
+
+async function disconnect(message = '') {
+  if (recovery) {
+    recovery.abort();
+    status('正在取消恢复');
+    syncControls();
+    return;
+  }
+  if (disconnecting) return;
+  disconnecting = true;
+  connectionRevision++;
+  resetDesktop(message);
   try {
     await call('Disconnect');
   } catch (err) {
     showConnectionError(errorMessage(err));
   } finally {
-    $('vnc-screen').replaceChildren();
     disconnecting = false;
+    syncControls();
+  }
+}
+
+async function restoreAfterWindowsLogin(transition, account, profile) {
+  const controller = recovery = new AbortController();
+  const signal = controller.signal;
+  connectionRevision++;
+  resetDesktop();
+  status('正在等待 Windows 切换桌面', 'connecting');
+  try {
+    const outcome = await waitForSignal(transition.result, signal);
+    if (outcome !== 'submitted' && outcome !== 'unconfirmed') throw new Error('远程桌面已关闭');
+    await call('Disconnect');
+    await recoverWindowsDisplay({
+      profile, signal,
+      open: p => call('Connect', p),
+      attach: (connection, remaining) => attachDesktop(profile, connection, { account, signal, remaining }),
+      close: async () => {
+        resetDesktop();
+        status('正在等待 Windows 桌面服务', 'connecting');
+        await call('Disconnect');
+      },
+    });
+  } catch (err) {
+    resetDesktop(signal.aborted ? '' : errorMessage(err));
+    try { await call('Disconnect'); } catch (closeError) { showConnectionError(errorMessage(closeError)); }
+  } finally {
+    recovery = undefined;
     syncControls();
   }
 }
@@ -707,6 +797,7 @@ document.addEventListener('keydown', (event) => {
   }
 }, true);
 $('disconnect').addEventListener('click', () => disconnect());
+$('cancel-recovery').addEventListener('click', () => disconnect());
 $('refresh').addEventListener('click', () => readDirectory(directory));
 $('upload').addEventListener('click', () => {
   const target = directory;

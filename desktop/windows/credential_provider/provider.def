@@ -1,0 +1,4 @@
+LIBRARY "jumpvnc-credential-provider"
+EXPORTS
+    DllCanUnloadNow PRIVATE
+    DllGetClassObject PRIVATE
