@@ -80,13 +80,12 @@
         <section class="setting-section">
           <label class="setting-row" for="quality-profile"><span>画质</span><select id="quality-profile" aria-describedby="quality-settings"><option value="video" selected>视频</option><option value="sharp">清晰</option></select></label>
           <p id="quality-settings" class="setting-note"></p>
-          <label class="setting-row overlay-setting" for="overlay-enabled" title="在远程桌面右下角显示实时连接信息"><span>网络状态</span><input id="overlay-enabled" type="checkbox" role="switch" checked></label>
         </section>
       </div>
       <footer class="settings-footer"><button id="disconnect" class="danger" type="button" hidden>断开连接</button><span id="settings-offline" class="setting-note">连接后可查看实时信息</span></footer>
     </aside>
   </main>
-  <dialog id="session-diagnostics" lang="en" aria-label="Session diagnostics">
+  <dialog id="session-diagnostics" lang="en" aria-label="Session diagnostics" autofocus>
     <div class="diagnostic-card">
       <h2><svg viewBox="0 0 18 16" aria-hidden="true" fill="currentColor"><use href="#signal-bars"/></svg>SSH RTT <span id="diag-rtt" data-metric>—</span></h2>
       <dl>
@@ -113,6 +112,7 @@
         <dt>Cursor</dt><dd id="diag-cursor" data-metric>—</dd>
         <dt>RFB client</dt><dd>noVNC 1.7.0</dd>
       </dl>
+      <label class="setting-row overlay-setting" for="overlay-enabled" lang="zh-CN" title="在远程桌面右下角显示实时连接信息"><span>网络状态</span><input id="overlay-enabled" type="checkbox" role="switch" aria-controls="connection-overlay" checked></label>
     </div>
   </dialog>
   <dialog id="connection-dialog" aria-label="连接设置">
