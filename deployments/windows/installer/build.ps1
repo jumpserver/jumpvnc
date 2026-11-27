@@ -1,4 +1,4 @@
-param([string]$Version = '0.1.2')
+param([string]$Version = '0.1.3')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) -Parent
 $compiler = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
