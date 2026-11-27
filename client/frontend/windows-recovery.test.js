@@ -181,17 +181,59 @@ test('wrong account, another challenge, cancellation, or socket closure never en
     const rfb = new EventTarget();
     const controller = new AbortController();
     const answer = deferred();
-    const ready = authorizeRecoveredDesktop(rfb, controller.signal, () => answer.promise);
+    const ready = authorizeRecoveredDesktop(rfb, controller.signal, () => answer.promise, 50);
     rfb.dispatchEvent(new Event('connect'));
     if (event === 'inactive') answer.resolve(false);
     else if (event === 'api-error') answer.reject(new Error('desktop closed'));
     else if (event === 'abort') controller.abort();
     else rfb.dispatchEvent(new Event(event));
-    await assert.rejects(ready, error => !(error instanceof DisplayTransportClosed));
+    await assert.rejects(ready, error => (error instanceof DisplayTransportClosed) === (event === 'disconnect'));
     answer.resolve(true);
     await Promise.resolve();
     assert.equal(rfb.viewOnly, true);
   }
+});
+
+test('a console change during account verification requires a fresh authenticated display', async () => {
+  const oldDisplay = new EventTarget();
+  const newDisplay = new EventTarget();
+  const oldCheck = deferred();
+  const signal = new AbortController().signal;
+  const displays = [oldDisplay, newDisplay];
+  let closed = 0;
+  await recovery({
+    signal,
+    open: async () => displays.shift(),
+    close: async () => { closed++; },
+    attach: async display => {
+      const isOld = display === oldDisplay;
+      const ready = authorizeRecoveredDesktop(display, signal, () => isOld ? oldCheck.promise : true);
+      display.dispatchEvent(new Event('connect'));
+      if (isOld) {
+        display.failureReason = 'Unexpected server disconnect';
+        display.dispatchEvent(new Event('disconnect'));
+        oldCheck.resolve(true);
+      }
+      await ready;
+    },
+  });
+  assert.equal(closed, 1);
+  assert.equal(oldDisplay.viewOnly, true);
+  assert.equal(newDisplay.viewOnly, false);
+  assert.equal(displays.length, 0);
+});
+
+test('a submitted login keeps input disabled while Windows is switching accounts', async () => {
+  const rfb = new EventTarget();
+  const answers = [false, true];
+  const ready = authorizeRecoveredDesktop(rfb, new AbortController().signal, async () => {
+    assert.equal(rfb.viewOnly, true);
+    return answers.shift();
+  });
+  rfb.dispatchEvent(new Event('connect'));
+  await ready;
+  assert.deepEqual(answers, []);
+  assert.equal(rfb.viewOnly, false);
 });
 
 test('a VNC negotiation error reported as disconnect stops before retry or verification', async () => {

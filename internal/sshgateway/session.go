@@ -89,6 +89,13 @@ func rejectRequest(req *ssh.Request, log *slog.Logger) {
 }
 
 func (s *Server) vncSubsystem(ctx context.Context, channel ssh.Channel, requests <-chan *ssh.Request, req *ssh.Request, log *slog.Logger) {
+	if s.Managed != nil {
+		peer, _ := ctx.Value(peerKey{}).(desktopPeer)
+		if peer.Key != s.Managed.Fingerprint || !s.Managed.Valid() {
+			rejectRequest(req, log)
+			return
+		}
+	}
 	if !s.desktops.enter() {
 		rejectRequest(req, log)
 		return
@@ -102,17 +109,19 @@ func (s *Server) vncSubsystem(ctx context.Context, channel ssh.Channel, requests
 		return
 	}
 	defer backend.Close()
+	ctx, cancel := backend.Context(ctx)
+	defer cancel()
 	if req.WantReply && req.Reply(true, nil) != nil {
 		return
 	}
-	if s.login == nil {
+	login.provider = backend.Login
+	if login.provider == nil {
 		done := make(chan struct{})
 		defer close(done)
 		go denyRequests(requests, done, log)
-		s.relayVNC(ctx, channel, backend, log)
+		s.relayVNC(ctx, channel, backend.TCPConn, log)
 		return
 	}
-	ctx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -128,7 +137,7 @@ func (s *Server) vncSubsystem(ctx context.Context, channel ssh.Channel, requests
 			}
 		}
 	}()
-	s.relayDesktop(ctx, channel, backend, io.TeeReader(backend, &login.proof), log)
+	s.relayDesktop(ctx, channel, backend.TCPConn, io.TeeReader(backend, &login.proof), log)
 	cancel()
 	<-done
 }

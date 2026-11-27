@@ -58,7 +58,7 @@ Linux 当前支持 X11，Windows 共享控制台桌面；多个连接访问同�
 
 双击托盘图标可随时打开管理窗口，修改用户名、监听地址、授权公钥、VNC 密码、文件目录及读写权限，保存后自动应用。也可替换授权公钥，改用已有的客户端密钥。
 
-服务随系统启动，退出托盘不影响远程连接。再次运行安装程序可升级，保留已有配置与凭据。卸载会移除服务和防火墙规则，保留用户配置及文件。
+Windows 服务 `SuperVNC` 随系统启动。退出托盘、注销或切换用户后，服务继续接受 SSH 和 SFTP 连接。切换物理控制台时，旧桌面连接结束，服务会为当前控制台启动新的抓屏进程；在 Viewer 中重新连接即可访问当前登录界面或已获授权的桌面。再次运行安装程序可升级，保留已有配置与凭据。卸载会移除服务和防火墙规则，保留用户配置及文件。
 
 如需从 Viewer 登录 Windows，在安装时勾选 **Enable Windows console sign-in from JumpVNC Viewer**，启用可选的 Windows 凭据提供程序（Credential Provider）。默认连接共享物理控制台，未启用此组件也能查看桌面并在 Windows 登录界面手动输入凭据。两种方式的画面和键鼠都走 VNC，无需开启 RDP。
 
@@ -81,12 +81,26 @@ bash install.sh
 1. macOS 解压后打开 `JumpVNC.app`；Windows 运行 Viewer 安装程序，或解压便携包打开 `JumpVNC.exe`（需要 Microsoft Edge WebView2 Runtime）；Linux 解压后以普通用户运行包内的 `sh install.sh`，或使用包内的 `.deb` / `.rpm` 安装，再从应用菜单打开 JumpVNC。Linux 需要 GTK 3 和 WebKitGTK，详见 [客户端安装说明](client/README.md#安装)。
 2. 协议选择 **SVNC**，填写服务器地址和端口（默认 `5922`）。「高级设置」中的 **SSH 用户名**（默认 `vncuser`）用于连接 JumpVNC 服务。若需指定私钥，可从 Windows 管理窗口复制连接私钥并保存为本机文件，或使用 Linux 安装输出指示的文件，然后在「SSH 私钥文件」中填写路径。留空时使用本机 SSH 身份，加密私钥需先加入 SSH agent。
 3. 首次连接时核对服务端的 SSH 主机指纹，并按提示输入 **VNC 密码**。Windows 服务端可通过「复制连接信息」获取 VNC 密码，Linux 服务端会在安装结束时显示。
-4. 使用 Windows 登录组件时，在 Viewer 主表单填写 **Windows 账号**（例如 `.\Administrator`）和该本机账号的 **Windows 密码**，macOS 可选择在本机钥匙串中记住密码。留空 Windows 账号即可普通连接。Viewer 完成 SSH 和 VNC 认证后，才能请求 Windows 登录。
+4. 使用 Windows 登录组件时，在 Viewer 主表单填写 **Windows 账号**（例如 `.\Administrator`）和该本机账号的 **Windows 密码**，macOS 可选择在本机钥匙串中记住密码。未启用托管账号时，留空 Windows 账号即可普通连接。Viewer 完成 SSH 和 VNC 认证后，才能请求 Windows 登录。
 
-   无用户登录时可请求登录指定账号。锁屏时只能请求解锁当前用户自己的会话。若已有其他 Viewer 在使用桌面，服务端会拒绝提交凭据。Windows 可能根据策略要求点击「登录」或完成其他验证，最终结果以远端桌面为准。
+   如需自动进入专用桌面，管理员可在安装器的 Windows console sign-in 选项下勾选 **Use a dedicated standard local account**。每台机器创建普通本地用户 `JumpVNCUser`，随机密码通过 Windows DPAPI 加密，只保存在服务端。Viewer 留空 Windows 账号，使用该安装生成的 SSH 连接私钥和 VNC 密码连接。升级会复用原账号和密钥；取消勾选或卸载会禁用专用账号，保留用户文件。同名的既有账号不会被接管。
+
+   Viewer 会等到 Windows 确认目标账号的控制台桌面已解锁，再显示画面并启用操作。无人登录时可登录目标账号，该账号已锁屏时可解锁自己的桌面。如果其他账号正在使用物理控制台，专用桌面也遵循 Windows 用户切换流程。下面以切换到 `wrd` 为例；要授权切换到专用桌面，将目标账号填为 `JumpVNCUser`。由当前桌面用户在自己的 PowerShell 中执行，授权仅对该目标账号的 SID 生效。
+
+   ```powershell
+   $target = (Get-LocalUser -Name 'wrd' -ErrorAction Stop).SID.Value
+   if (!(Test-Path 'HKCU:\Software\JumpVNC')) { New-Item 'HKCU:\Software\JumpVNC' | Out-Null }
+   New-ItemProperty 'HKCU:\Software\JumpVNC' -Name AllowConsoleSwitchToSID -Value $target -PropertyType String -Force | Out-Null
+   ```
+
+   服务端先验证目标账号的 Windows 交互登录凭据，当前用户的 JumpVNC 托盘随后请求 Windows 锁屏。Windows 提供目标用户的登录磁贴时，登录组件提交该用户的凭据，原用户的程序继续运行。此功能要求更新服务、托盘和凭据提供程序，并允许 Windows 快速用户切换。
+
+   如果凭据组件日志依次出现 `pipe.opened.unlock` 和 `tile.console_mismatch`，Windows 正在要求解锁原账号。此时由控制台用户在 Ctrl+Alt+Del 安全界面选择 **切换用户**，再从 Viewer 连接目标账号。原会话和其中的程序会保留。Windows 要求额外验证或有其他 Viewer 占用连接时，自动切换也会停止。撤销授权可执行 `Remove-ItemProperty 'HKCU:\Software\JumpVNC' -Name AllowConsoleSwitchToSID`。
 
 5. 进入桌面后，点击“文件管理”浏览远程目录，从本机文件管理器拖入文件上传，或选中文件下载到本机。文件管理需服务端已启用 SFTP。
 6. 按需在“设置”中切换清晰或视频模式。当前窗口激活时，文本剪贴板自动双向同步。
+
+在 Windows 物理桌面右键 JumpVNC 托盘图标，选择 **远程连接**，可查看来源地址、连接时长并断开所选或全部桌面连接。也可以从服务管理窗口底部进入。
 
 更多操作见 [Viewer 使用说明](client/README.md)。已有 VNC Viewer 的 SSH 隧道接入方式见 [兼容接入](docs/protocol.md#71-ssh-本地转发)。
 

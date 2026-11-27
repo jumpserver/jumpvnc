@@ -82,17 +82,25 @@ func consoleUser(session uint32) (*windows.SID, error) {
 	return user.User.Sid.Copy()
 }
 
-func (w windowsLogin) accountMatches(account string, allowEmpty bool) bool {
+func localLoginSID(account string) *windows.SID {
 	computer, err := windows.ComputerName()
 	if err != nil {
-		return false
+		return nil
 	}
 	name := strings.TrimPrefix(account, `.\`)
 	if name == "" || strings.ContainsAny(name, `\/@`) {
-		return false
+		return nil
 	}
 	requested, domain, kind, err := windows.LookupSID("", computer+`\`+name)
 	if err != nil || kind != windows.SidTypeUser || !strings.EqualFold(domain, computer) {
+		return nil
+	}
+	return requested
+}
+
+func (w windowsLogin) accountMatches(account string, allowEmpty bool) bool {
+	requested := localLoginSID(account)
+	if requested == nil {
 		return false
 	}
 	owner, err := consoleUser(w.session)
@@ -104,28 +112,35 @@ func (w windowsLogin) Active(account string) bool {
 	return ok && state == 1 && w.accountMatches(account, false)
 }
 
-func (w windowsLogin) Ready() bool {
+func (w windowsLogin) Ready(account string) bool {
 	state, ok := w.lockState()
 	if !ok {
 		return false
 	}
-	if state == 0 {
-		return true
-	}
 	// Before the first local sign-in Windows can report an unlocked Winlogon
 	// desktop even though there is no interactive user.
 	owner, err := consoleUser(w.session)
-	return err == nil && owner == nil
+	if err != nil || state > 1 {
+		return false
+	}
+	if account == "" {
+		return owner == nil || state == 0
+	}
+	target := localLoginSID(account)
+	if target == nil {
+		return false
+	}
+	if owner == nil || owner.Equals(target) {
+		return owner == nil || state == 0
+	}
+	return switchAllowed(owner, target)
 }
 
 func (w windowsLogin) canSubmit(account string) bool {
-	return w.Available() && w.Ready() && w.accountMatches(account, true)
+	return w.Available() && w.Ready(account) && w.accountMatches(account, true)
 }
 
 func (w windowsLogin) Submit(ctx context.Context, account string, password []byte) error {
-	if !w.canSubmit(account) {
-		return errors.New("console owner or lock state does not match this account")
-	}
 	name := utf16.Encode([]rune(account))
 	if len(name) == 0 || len(name) > 256 {
 		return errors.New("invalid local account length")
@@ -135,6 +150,32 @@ func (w windowsLogin) Submit(ctx context.Context, account string, password []byt
 		return err
 	}
 	defer clear(secret)
+	owner, err := consoleUser(w.session)
+	if err != nil {
+		return err
+	}
+	target := localLoginSID(account)
+	if target == nil {
+		return errors.New("local sign-in account unavailable")
+	}
+	switching := owner != nil && !target.Equals(owner)
+	canSubmit := func() bool {
+		if !switching {
+			return w.canSubmit(account)
+		}
+		state, ok := w.lockState()
+		current, err := consoleUser(w.session)
+		return ok && state == 0 && err == nil && current != nil && current.Equals(owner) &&
+			w.Available() && switchAllowed(owner, target)
+	}
+	if switching {
+		if err := w.prepareUserSwitch(ctx, owner, target, account, secret); err != nil {
+			return err
+		}
+	}
+	if !canSubmit() {
+		return errors.New("console owner or lock state does not match this account")
+	}
 
 	// go-winio creates the first instance exclusively and rejects remote pipes.
 	// LogonUI first peeks for a complete invitation. A zero-quota pipe can
@@ -159,7 +200,7 @@ func (w windowsLogin) Submit(ctx context.Context, account string, password []byt
 		select {
 		case <-sasCtx.Done():
 		case <-timer.C:
-			if sasCtx.Err() == nil && w.canSubmit(account) {
+			if sasCtx.Err() == nil && canSubmit() {
 				if err := sendConsoleSAS(w.log); err != nil {
 					w.log.Warn("windows_login.sas_unavailable", "error", err)
 				}
@@ -187,6 +228,9 @@ func (w windowsLogin) Submit(ctx context.Context, account string, password []byt
 	defer windows.CloseHandle(process)
 	header := make([]byte, 10+2*len(name))
 	copy(header, "JVC1")
+	if switching {
+		copy(header, "JVS1")
+	}
 	binary.LittleEndian.PutUint32(header[4:], w.session)
 	binary.LittleEndian.PutUint16(header[8:], uint16(len(name)))
 	for i, u := range name {
@@ -201,7 +245,11 @@ func (w windowsLogin) Submit(ctx context.Context, account string, password []byt
 	}
 	cancelSAS()
 	<-sasDone
-	if ack[0] != 'G' || ctx.Err() != nil || !w.canSubmit(account) {
+	expected := byte('G')
+	if switching {
+		expected = 'L'
+	}
+	if ack[0] != expected || ctx.Err() != nil || !canSubmit() {
 		return errors.New("credential provider cancelled the login")
 	}
 	if _, err := conn.Write(secret); err != nil {

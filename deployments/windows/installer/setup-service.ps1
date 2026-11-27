@@ -1,4 +1,4 @@
-param([switch]$NoStartService, [switch]$EnableWindowsLogin)
+param([switch]$NoStartService, [switch]$EnableWindowsLogin, [switch]$ManagedAccount)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) -Parent
 $agent = Join-Path $root 'bin\jumpvnc.exe'
@@ -21,9 +21,14 @@ Get-ChildItem -LiteralPath $root -Filter 'unins*.exe' | ForEach-Object {
 }
 Get-NetFirewallRule -Name 'JumpVNC.Server' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
 New-NetFirewallRule -Name 'JumpVNC.Server' -DisplayName 'JumpVNC Server' -Direction Inbound -Action Allow -Protocol TCP -Program $agent -Service SuperVNC | Out-Null
-if ($EnableWindowsLogin) {
+if ($EnableWindowsLogin -or $ManagedAccount) {
   & (Join-Path $PSScriptRoot 'set-windows-login.ps1') -Action Enable
 } else {
   & (Join-Path $PSScriptRoot 'set-windows-login.ps1') -Action Disable
+}
+if ($ManagedAccount) {
+  & (Join-Path $PSScriptRoot 'set-managed-account.ps1') -Action Enable
+} else {
+  & (Join-Path $PSScriptRoot 'set-managed-account.ps1') -Action Disable
 }
 if (-not $NoStartService) { Start-Service SuperVNC }

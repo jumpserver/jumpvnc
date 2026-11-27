@@ -84,6 +84,15 @@ int main() {
     CHECK(readHeader(frame, 10, 7, units) == HeaderState::Waiting);
     CHECK(readHeader(frame, 12, 8, units) == HeaderState::Invalid);
     CHECK(readHeader(frame, 12, 7, units) == HeaderState::Ready && units == 1);
+    frame[2] = 'S';
+    CHECK(readHeader(frame, 12, 7, units) == HeaderState::Ready);
+    CHECK(switchTileAllowed(CPUS_LOGON, UserTile::EnumeratedUser));
+    CHECK(!switchTileAllowed(CPUS_UNLOCK_WORKSTATION, UserTile::EnumeratedUser));
+    CHECK(!switchTileAllowed(CPUS_LOGON, UserTile::OtherLocal));
+    CHECK(!switchTileAllowed(CPUS_LOGON, UserTile::Hidden));
+    frame[2] = 'X';
+    CHECK(readHeader(frame, 12, 7, units) == HeaderState::Invalid);
+    frame[2] = 'C';
     frame[8] = 0;
     CHECK(readHeader(frame, 12, 7, units) == HeaderState::Invalid);
     frame[9] = 2;

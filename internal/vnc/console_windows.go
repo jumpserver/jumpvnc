@@ -77,11 +77,17 @@ func StartConsole(ctx context.Context, cfg config.VNC, log *slog.Logger, logPath
 		return Backend{}, err
 	}
 	log.Info("vnc.ready", "engine", cfg.Engine, "listen", cfg.Listen, "console_session", session)
-	backend := Backend{Exited: exited, Stop: stop, Dial: dial}
+	var login ConsoleLogin
 	if !cfg.ViewOnly {
-		backend.Login = windowsLogin{session: session, log: log}
+		login = windowsLogin{session: session, log: log}
 	}
-	return backend, nil
+	return Backend{Exited: exited, Stop: stop, Dial: func(ctx context.Context) (Desktop, error) {
+		if windows.WTSGetActiveConsoleSessionId() != session {
+			return Desktop{}, errors.New("Windows console session changed")
+		}
+		conn, err := dial(ctx)
+		return Desktop{TCPConn: conn, Login: login}, err
+	}}, nil
 }
 
 func launchConsoleProcess(session uint32, executable string, args []string) (windows.ProcessInformation, error) {

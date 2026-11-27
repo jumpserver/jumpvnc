@@ -49,10 +49,12 @@ export function authorizeRecoveredDesktop(rfb, signal, verify, remaining = 12000
   return new Promise((resolve, reject) => {
     let settled = false;
     let verifying = false;
+    let retry;
     function finish(error) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      clearTimeout(retry);
       signal.removeEventListener('abort', cancel);
       for (const [event, handler] of Object.entries(handlers)) rfb.removeEventListener(event, handler);
       if (error) reject(error);
@@ -62,27 +64,32 @@ export function authorizeRecoveredDesktop(rfb, signal, verify, remaining = 12000
       }
     }
     const cancel = () => finish(signal.reason || new Error('已取消恢复'));
+    async function checkAccount() {
+      try {
+        const active = await verify();
+        if (settled) return;
+        if (active === true) finish();
+        else if (active === false) retry = setTimeout(checkAccount, 500);
+        else finish(new Error('服务端未返回 Windows 账号状态。'));
+      } catch (error) {
+        finish(new Error('桌面账号确认失败：' + (error?.message || String(error))));
+      }
+    }
     const handlers = {
-      async connect() {
+      connect() {
         if (verifying) return;
         verifying = true;
-        try {
-          if (await verify() !== true) throw new Error('无法确认此 Windows 账号已解锁。');
-          finish();
-        } catch (error) {
-          finish(new Error('桌面账号确认失败：' + (error?.message || String(error))));
-        }
+        checkAccount();
       },
       securityfailure: () => finish(new Error('VNC 认证失败，请手动连接。')),
       credentialsrequired: () => finish(new Error('VNC 要求重新认证，请手动连接。')),
       disconnect() {
-        if (verifying) finish(new Error('确认账号时桌面连接已中断，请手动连接。'));
-        else if (socketClosed(rfb.failureReason)) finish(new DisplayTransportClosed());
+        if (socketClosed(rfb.failureReason)) finish(new DisplayTransportClosed());
         else finish(new Error('无法恢复 VNC 桌面：' + rfb.failureReason));
       },
     };
     const timer = setTimeout(() => finish(verifying
-      ? new Error('确认 Windows 桌面账号超时，请手动连接。') : new DisplayTransportClosed()), Math.min(12000, remaining));
+      ? new Error('未能确认目标 Windows 账号已解锁。请检查账号、密码和控制台登录状态后重试。') : new DisplayTransportClosed()), Math.min(12000, remaining));
     for (const [event, handler] of Object.entries(handlers)) rfb.addEventListener(event, handler);
     signal.addEventListener('abort', cancel, { once: true });
     if (signal.aborted) cancel();

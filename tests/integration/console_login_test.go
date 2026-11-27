@@ -5,15 +5,20 @@ import (
 	"context"
 	"encoding/binary"
 	"io"
+	"log/slog"
+	"net"
+	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 
 	"jumpvnc/internal/config"
 	"jumpvnc/internal/sshgateway"
+	"jumpvnc/internal/vnc"
 )
 
 const loginAccount = `.\Operator`
@@ -25,7 +30,9 @@ type consoleLoginRecorder struct {
 
 func (*consoleLoginRecorder) Available() bool            { return true }
 func (*consoleLoginRecorder) Active(account string) bool { return account == "ActiveUser" }
-func (*consoleLoginRecorder) Ready() bool                { return true }
+func (*consoleLoginRecorder) Ready(account string) bool {
+	return account == "" || account == loginAccount
+}
 func (r *consoleLoginRecorder) Submit(_ context.Context, account string, password []byte) error {
 	r.calls.Add(1)
 	if account != loginAccount || !bytes.Equal(password, []byte(samplePassword)) {
@@ -154,15 +161,79 @@ func authenticateFixture(t *testing.T, ch ssh.Channel, mode string) {
 	}
 }
 
+func dialFixture(address string, login vnc.ConsoleLogin) func(context.Context) (vnc.Desktop, error) {
+	return func(ctx context.Context) (vnc.Desktop, error) {
+		conn, err := (&net.Dialer{}).DialContext(ctx, "tcp4", address)
+		if err != nil {
+			return vnc.Desktop{}, err
+		}
+		return vnc.Desktop{TCPConn: conn.(*net.TCPConn), Login: login}, nil
+	}
+}
+
+func TestConsoleWorkerRestartKeepsSSHAndSFTP(t *testing.T) {
+	address := rfbLoginFixture(t, "exclusive")
+	workers := make(chan vnc.Backend, 1)
+	manager := vnc.SuperviseConsole(t.Context(), func(ctx context.Context) (vnc.Backend, error) {
+		select {
+		case worker := <-workers:
+			return worker, nil
+		case <-ctx.Done():
+			return vnc.Backend{}, ctx.Err()
+		}
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	t.Cleanup(manager.Stop)
+	client, _, _ := startGatewayWithSetup(t, "read_write", func(s *sshgateway.Server) {
+		s.SetVNCDialer(manager.Dial)
+	}, func(c *config.Config) { c.VNC.Engine = "libvncserver" })
+	files, err := sftp.NewClient(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer files.Close()
+	checkFiles := func() {
+		t.Helper()
+		if _, err := files.ReadDir("/"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	checkFiles()
+	firstExit := make(chan error, 1)
+	workers <- vnc.Backend{Dial: dialFixture(address, &consoleLoginRecorder{}), Exited: firstExit, Stop: func() {}}
+	first := openDesktopChannel(t, client)
+	authenticateFixture(t, first, "exclusive")
+	expectLoginRequest(t, first, "-supported", nil, true)
+	firstExit <- nil
+	closed := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(io.Discard, first)
+		closed <- err
+	}()
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("retired desktop channel is still open")
+	}
+	checkFiles()
+	workers <- vnc.Backend{Dial: dialFixture(address, nil), Stop: func() {}}
+	second := openDesktopChannel(t, client)
+	authenticateFixture(t, second, "exclusive")
+	expectLoginRequest(t, second, "-supported", nil, false)
+	checkFiles()
+}
+
 func TestConsoleLoginChannelPolicies(t *testing.T) {
 	payload := ssh.Marshal(struct{ Account, Password string }{loginAccount, samplePassword})
-	for _, mode := range []string{"exclusive", "shared", "view-only", "no-provider", "bad-password", "none", "rfb33", "unprepared", "invalid-account"} {
+	for _, mode := range []string{"exclusive", "shared", "view-only", "no-provider", "bad-password", "none", "rfb33", "unprepared", "invalid-account", "changed-account"} {
 		t.Run(mode, func(t *testing.T) {
 			address := rfbLoginFixture(t, mode)
 			recorder := &consoleLoginRecorder{}
 			client, _, _ := startGatewayWithSetup(t, "disabled", func(s *sshgateway.Server) {
 				if mode != "no-provider" {
-					s.SetConsoleLogin(recorder)
+					s.SetVNCDialer(dialFixture(address, recorder))
 				}
 			}, func(c *config.Config) {
 				c.VNC.Listen, c.VNC.Engine = address, "libvncserver"
@@ -182,6 +253,10 @@ func TestConsoleLoginChannelPolicies(t *testing.T) {
 				expectLoginRequest(t, ch, "-ready", nil, true)
 				invalid := ssh.Marshal(struct{ Account, Password string }{`OTHER\Operator`, samplePassword})
 				expectLoginRequest(t, ch, "", invalid, false)
+			case "changed-account":
+				expectLoginRequest(t, ch, "-active", ssh.Marshal(struct{ Account string }{loginAccount}), false)
+				expectLoginRequest(t, ch, "-ready", nil, true)
+				expectLoginRequest(t, ch, "", ssh.Marshal(struct{ Account, Password string }{"OtherUser", samplePassword}), false)
 			case "shared":
 				other, err := client.Dial("tcp", address)
 				if err != nil {
@@ -193,6 +268,8 @@ func TestConsoleLoginChannelPolicies(t *testing.T) {
 			case "exclusive":
 				expectLoginRequest(t, ch, "-supported", nil, true)
 				expectLoginRequest(t, ch, "-active", ssh.Marshal(struct{ Account string }{"ActiveUser"}), true)
+				expectLoginRequest(t, ch, "-ready", nil, false)
+				expectLoginRequest(t, ch, "-active", ssh.Marshal(struct{ Account string }{loginAccount}), false)
 				expectLoginRequest(t, ch, "-ready", nil, true)
 				expectLoginRequest(t, ch, "", payload, true)
 				expectLoginRequest(t, ch, "", payload, false)
@@ -209,5 +286,99 @@ func TestConsoleLoginChannelPolicies(t *testing.T) {
 				t.Fatalf("Windows credential submissions = %d, want %d", calls, want)
 			}
 		})
+	}
+}
+
+type managedRecorder struct{ consoleLoginRecorder }
+
+func (*managedRecorder) Ready(account string) bool { return account == sshgateway.ManagedAccount }
+func (r *managedRecorder) Submit(_ context.Context, account string, password []byte) error {
+	if account != sshgateway.ManagedAccount || string(password) != samplePassword {
+		return io.ErrUnexpectedEOF
+	}
+	r.calls.Add(1)
+	return nil
+}
+
+func TestManagedAccountAndLocalDisconnect(t *testing.T) {
+	address := rfbLoginFixture(t, "exclusive")
+	login := &managedRecorder{}
+	var gateway *sshgateway.Server
+	var key string
+	client, _, _ := startGatewayWithSetup(t, "read_write", func(s *sshgateway.Server) {
+		gateway = s
+		s.SetVNCDialer(dialFixture(address, login))
+		s.Managed = &sshgateway.ManagedLogin{Fingerprint: key, Valid: func() bool { return true }, Password: func() ([]byte, error) { return []byte(samplePassword), nil }}
+	}, func(cfg *config.Config) {
+		cfg.VNC.Engine = "libvncserver"
+		cfg.SSH.Limits.MaxChannelsPerConnection = 6
+		data, err := os.ReadFile(cfg.SSH.AuthorizedKeysFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pub, _, _, _, err := ssh.ParseAuthorizedKey(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		key = ssh.FingerprintSHA256(pub)
+	})
+	files, err := sftp.NewClient(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer files.Close()
+	if len(gateway.Connections.List()) != 0 {
+		t.Fatal("SFTP counted as remote control")
+	}
+	ch := openDesktopChannel(t, client)
+	managed := func(want bool, payload []byte) {
+		t.Helper()
+		ok, err := ch.SendRequest("windows-managed-login@jumpvnc", true, payload)
+		if err != nil || ok != want {
+			t.Fatalf("managed reply %v: %v", ok, err)
+		}
+	}
+	managed(false, nil)
+	authenticateFixture(t, ch, "exclusive")
+	other := openDesktopChannel(t, client)
+	authenticateFixture(t, other, "exclusive")
+	items := gateway.Connections.List()
+	if len(items) != 2 || !items[0].Authenticated || !items[1].Authenticated || items[1].User != "desktop" {
+		t.Fatalf("desktop list: %+v", items)
+	}
+	gateway.Connections.Disconnect([]string{items[1].ID})
+	awaitClosed := func(stream ssh.Channel) {
+		t.Helper()
+		done := make(chan error, 1)
+		go func() { var b [1]byte; _, err := stream.Read(b[:]); done <- err }()
+		select {
+		case err := <-done:
+			if err == nil {
+				t.Fatal("still receiving data")
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("remote connection stayed open")
+		}
+	}
+	awaitClosed(other)
+	other.Close()
+	deadline := time.Now().Add(time.Second)
+	for len(gateway.Connections.List()) != 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	expectLoginRequest(t, ch, "-active", ssh.Marshal(struct{ Account string }{"Administrator"}), false)
+	expectLoginRequest(t, ch, "-ready", nil, false)
+	expectLoginRequest(t, ch, "-active", ssh.Marshal(struct{ Account string }{sshgateway.ManagedAccount}), false)
+	expectLoginRequest(t, ch, "-ready", nil, true)
+	managed(false, []byte("client-provided"))
+	managed(true, nil)
+	managed(false, nil)
+	if login.calls.Load() != 1 {
+		t.Fatal("unexpected Windows submit count")
+	}
+	gateway.Connections.Disconnect([]string{items[0].ID, items[1].ID})
+	awaitClosed(ch)
+	if _, err := files.ReadDir("/"); err != nil {
+		t.Fatalf("disconnect interrupted file service: %v", err)
 	}
 }

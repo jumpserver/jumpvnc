@@ -39,6 +39,7 @@ type session struct {
 	busy            atomic.Bool
 	loginMu         sync.Mutex
 	pendingLogin    *windowsLogin
+	managedAccount  string
 }
 
 type windowsLogin struct {
@@ -234,7 +235,25 @@ func (s *session) openDesktop(ctx context.Context, p Profile) (io.ReadWriteClose
 		return nil, errors.New("服务端拒绝 VNC subsystem；旧 Agent 可选择 VNC 协议并启用 SSH 隧道")
 	}
 	s.desktopChannel = channel
-	if p.WindowsAccount != "" && p.WindowsPassword != "" {
+	if p.WindowsAccount == "" {
+		timer := time.AfterFunc(sshTimeout, func() { s.ssh.Close() })
+		offered, data, err := s.ssh.SendRequest("windows-managed-account@jumpvnc", true, nil)
+		timer.Stop()
+		if err != nil {
+			channel.Close()
+			return nil, fmt.Errorf("检查服务端托管账号: %w", err)
+		}
+		if offered {
+			if string(data) != "JumpVNCUser" {
+				channel.Close()
+				return nil, errors.New("服务端返回了未知的托管账号")
+			}
+			p.WindowsPassword = ""
+			s.managedAccount = string(data)
+			p.WindowsAccount = s.managedAccount
+		}
+	}
+	if s.managedAccount != "" || (p.WindowsAccount != "" && p.WindowsPassword != "") {
 		s.loginMu.Lock()
 		// Release an unclaimed one-shot credential if the RFB handshake stalls.
 		s.pendingLogin = &windowsLogin{account: p.WindowsAccount, password: []byte(p.WindowsPassword),
@@ -309,24 +328,29 @@ func (s *session) submitWindowsLogin() (string, error) {
 	}
 	ready, err := channel.SendRequest("windows-login-ready@jumpvnc", true, nil)
 	if err != nil || !ready {
-		return "", errors.New("当前控制台无法接受 Windows 登录，请查看桌面状态")
+		return "", errors.New("当前控制台未就绪。若由其他用户占用，请检查该用户是否允许切换到此账号，以及 Windows 快速用户切换策略。")
 	}
-	payload := ssh.Marshal(struct {
-		Account  string
-		Password []byte
-	}{login.account, login.password})
+	request := "windows-managed-login@jumpvnc"
+	var payload []byte
+	if s.managedAccount == "" {
+		request = "windows-login@jumpvnc"
+		payload = ssh.Marshal(struct {
+			Account  string
+			Password []byte
+		}{login.account, login.password})
+	}
 	defer clear(payload)
 	if s.ctx.Err() != nil || !s.desktopAttached.Load() {
 		return "", errors.New("原桌面连接已关闭")
 	}
-	ok, err := channel.SendRequest("windows-login@jumpvnc", true, payload)
+	ok, err := channel.SendRequest(request, true, payload)
 	if err != nil {
 		// After attempting the one-shot submit, a lost reply leaves the Windows
 		// result ambiguous. Recovery must only confirm the requested account.
 		return "unconfirmed", nil
 	}
 	if !ok {
-		return "", errors.New("服务端未受理 Windows 登录请求，请查看当前桌面或服务端日志")
+		return "", errors.New("Windows 登录未完成。请检查账号凭据、控制台用户的 JumpVNC 托盘和服务端 windows_login 日志。")
 	}
 	return "submitted", nil
 }

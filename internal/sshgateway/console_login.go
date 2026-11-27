@@ -12,6 +12,8 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/crypto/ssh"
+
+	"jumpvnc/internal/vnc"
 )
 
 // A console authenticated by a Viewer must not be shared underneath that Viewer.
@@ -73,7 +75,9 @@ func (p *rfbAuthProof) Write(data []byte) (int, error) {
 }
 
 type desktopLogin struct {
+	provider  vnc.ConsoleLogin
 	proof     rfbAuthProof
+	account   string
 	prepared  bool
 	used      bool
 	exclusive bool
@@ -88,7 +92,7 @@ func (l *desktopLogin) handle(ctx context.Context, s *Server, req *ssh.Request, 
 		}
 	}()
 	if !req.WantReply || s.cfg.VNC.ViewOnly || s.cfg.VNC.Compatibility.Enabled ||
-		s.cfg.VNC.Engine != "libvncserver" || !l.proof.ok.Load() || l.used || ctx.Err() != nil || !s.login.Available() {
+		s.cfg.VNC.Engine != "libvncserver" || !l.proof.ok.Load() || l.used || ctx.Err() != nil || !l.provider.Available() {
 		return
 	}
 	switch req.Type {
@@ -96,33 +100,53 @@ func (l *desktopLogin) handle(ctx context.Context, s *Server, req *ssh.Request, 
 		ok = len(req.Payload) == 0
 	case "windows-login-active@jumpvnc":
 		account, rest, valid := loginField(req.Payload)
-		ok = valid && len(rest) == 0 && validAccount(account) && s.login.Active(string(account))
+		l.account, l.prepared = "", false
+		if valid && len(rest) == 0 && validAccount(account) {
+			l.account = string(account)
+			ok = l.provider.Active(l.account)
+		}
 	case "windows-login-ready@jumpvnc":
-		l.prepared = len(req.Payload) == 0 && s.login.Ready()
+		l.prepared = len(req.Payload) == 0 && l.provider.Ready(l.account)
 		ok = l.prepared
+	case "windows-managed-login@jumpvnc":
+		if s.Managed == nil || !s.Managed.Valid() || len(req.Payload) != 0 || !l.prepared || l.account != ManagedAccount || !l.provider.Ready(l.account) || !s.desktops.claim() {
+			return
+		}
+		l.exclusive, l.used = true, true
+		password, err := s.Managed.Password()
+		if err != nil {
+			log.Warn("windows_login.managed_credential_unavailable")
+			return
+		}
+		defer clear(password)
+		ok = l.submit(ctx, l.account, password, log)
 	case "windows-login@jumpvnc":
 		if !l.prepared {
 			return
 		}
 		l.used = true
 		account, rest, valid := loginField(req.Payload)
-		if !valid || !validAccount(account) {
+		if !valid || !validAccount(account) || (l.account != "" && string(account) != l.account) {
 			return
 		}
 		password, rest, valid := loginField(rest)
-		if !valid || len(rest) != 0 || !s.login.Ready() || !s.desktops.claim() {
+		if !valid || len(rest) != 0 || !l.provider.Ready(string(account)) || !s.desktops.claim() {
 			return
 		}
 		l.exclusive = true
-		loginCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		if err := s.login.Submit(loginCtx, string(account), password); err != nil {
-			log.Warn("windows_login.failed", "error", err)
-			return
-		}
-		log.Info("windows_login.submitted")
-		ok = true
+		ok = l.submit(ctx, string(account), password, log)
 	}
+}
+
+func (l *desktopLogin) submit(ctx context.Context, account string, password []byte, log *slog.Logger) bool {
+	loginCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if err := l.provider.Submit(loginCtx, account, password); err != nil {
+		log.Warn("windows_login.failed", "error", err)
+		return false
+	}
+	log.Info("windows_login.submitted")
+	return true
 }
 
 func loginField(b []byte) ([]byte, []byte, bool) {

@@ -64,6 +64,9 @@ func (t *windowsTray) closePanel() {
 	t.panel.hidePassword()
 	setControlText(t.panel.passwordInput, "")
 	showWindow.Call(t.panel.window, swHide)
+	if t.panel.remote.visible {
+		t.showConnections(false)
+	}
 }
 
 func (t *windowsTray) currentPanelPasswordFile() (string, error) {

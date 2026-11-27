@@ -27,7 +27,6 @@
   <main class="workspace">
     <section class="desktop" aria-label="远程桌面">
       <div id="vnc-screen" hidden></div>
-      <div id="windows-login-notice" hidden><span role="alert" id="windows-login-message"></span><button id="dismiss-windows-login" type="button" aria-label="关闭 Windows 登录提示">关闭</button></div>
       <div id="connection-overlay" aria-label="Connection statistics" lang="en" role="group" hidden>
         <div><span id="overlay-duration" data-metric>—</span></div>
         <div><span id="overlay-updates" data-metric>—</span> <small>updates/s</small></div>
@@ -124,7 +123,7 @@
               <label>服务器地址<input name="host" required autocomplete="off" placeholder="IP 地址或主机名"></label>
               <label>端口<input name="port" type="number" min="1" max="65535" placeholder="5922"></label>
               <div class="wide windows-fields" data-windows>
-                <label>Windows 账号<input name="windowsAccount" placeholder="例如 .\Administrator" autocomplete="off" spellcheck="false"></label>
+                <label>Windows 账号<input name="windowsAccount" placeholder="留空以使用服务端托管账号" autocomplete="off" spellcheck="false"></label>
                 <label>Windows 密码<input name="windowsPassword" type="password" autocomplete="off" placeholder="连接时输入"></label>
                 <label class="checkbox-row wide" data-windows-keychain hidden><input name="storedWindowsPassword" type="checkbox">在本机钥匙串中记住 Windows 密码</label>
               </div>

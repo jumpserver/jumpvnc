@@ -46,6 +46,7 @@ class Credential final : public ICredentialProviderCredential2, public Counted {
     DWORD session_;
     ULONGLONG opened_;
     CREDENTIAL_PROVIDER_USAGE_SCENARIO scenario_;
+    bool switching_;
     DWORD traced_ = 0;
     UserTile userTile_ = UserTile::Hidden;
     void close() {
@@ -53,8 +54,8 @@ class Credential final : public ICredentialProviderCredential2, public Counted {
         pipe_ = INVALID_HANDLE_VALUE;
     }
 public:
-    Credential(HANDLE pipe, const Account& account, DWORD session, ULONGLONG opened, CREDENTIAL_PROVIDER_USAGE_SCENARIO scenario)
-        : pipe_(pipe), account_(account), session_(session), opened_(opened), scenario_(scenario) {}
+    Credential(HANDLE pipe, const Account& account, DWORD session, ULONGLONG opened, CREDENTIAL_PROVIDER_USAGE_SCENARIO scenario, bool switching)
+        : pipe_(pipe), account_(account), session_(session), opened_(opened), scenario_(scenario), switching_(switching) {}
     ~Credential() override { close(); }
     bool available() const {
         return pipe_ != INVALID_HANDLE_VALUE && isPhysicalConsole(session_) && GetTickCount64() - opened_ < requestLifetimeMs &&
@@ -67,7 +68,7 @@ public:
     bool bindUsers(ICredentialProviderUserArray* users) {
         UserTile tile;
         HRESULT hr = selectUserTile(users, account_.sid, tile);
-        if (tile == UserTile::Hidden) {
+        if (tile == UserTile::Hidden || (switching_ && !switchTileAllowed(scenario_, tile))) {
             trace(L"tile.binding.unavailable", session_, hr);
             cancel();
             return false;
@@ -146,8 +147,8 @@ public:
         *icon = CPSI_NONE;
         once(Serialization, L"tile.serialization_requested");
         HRESULT result = E_ACCESSDENIED;
-        if (available() && canSignIn(session_, scenario_, account_))
-            result = serialize(pipe_, account_, scenario_, serialized);
+        if (available() && (switching_ ? switchTileAllowed(scenario_, userTile_) : canSignIn(session_, scenario_, account_)))
+            result = serialize(pipe_, account_, scenario_, switching_, serialized);
         close();
         once(Returned, L"tile.serialization_returned", result);
         if (SUCCEEDED(result)) *response = CPGSR_RETURN_CREDENTIAL_FINISHED;
@@ -241,12 +242,13 @@ class Provider final : public ICredentialProvider, public ICredentialProviderSet
             closeInvitation();
             return false;
         }
-        if (!canSignIn(session_, scenario_, account)) {
+        const bool switching = memcmp(frame, "JVS1", 4) == 0;
+        if (switching ? scenario_ != CPUS_LOGON : !canSignIn(session_, scenario_, account)) {
             trace(L"tile.console_mismatch", session_, E_ACCESSDENIED);
             closeInvitation();
             return false;
         }
-        tile_ = new (std::nothrow) Credential(invitation_, account, session_, opened_, scenario_);
+        tile_ = new (std::nothrow) Credential(invitation_, account, session_, opened_, scenario_, switching);
         if (!tile_) { closeInvitation(); return false; }
         invitation_ = INVALID_HANDLE_VALUE;
         if (!tile_->bindUsers(users_)) {

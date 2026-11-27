@@ -50,7 +50,7 @@ HeaderState readHeader(const BYTE* bytes, DWORD available, DWORD session, WORD& 
     DWORD sourceSession;
     memcpy(&sourceSession, bytes + 4, sizeof(sourceSession));
     memcpy(&units, bytes + 8, sizeof(units));
-    if (memcmp(bytes, "JVC1", 4) || sourceSession != session || !units || units > maxUnits)
+    if ((memcmp(bytes, "JVC1", 4) && memcmp(bytes, "JVS1", 4)) || sourceSession != session || !units || units > maxUnits)
         return HeaderState::Invalid;
     return available < headerBytes + units * sizeof(wchar_t) ? HeaderState::Waiting : HeaderState::Ready;
 }
@@ -168,12 +168,13 @@ struct Password {
     ~Password() { SecureZeroMemory(value, sizeof(value)); }
 };
 
-HRESULT serialize(HANDLE pipe, const Account& account, CREDENTIAL_PROVIDER_USAGE_SCENARIO scenario,
+HRESULT serialize(HANDLE pipe, const Account& account, CREDENTIAL_PROVIDER_USAGE_SCENARIO scenario, bool switching,
                   CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION* serialized) {
     ULONG package;
     HRESULT hr = negotiatePackage(&package);
     if (FAILED(hr)) return hr;
-    char request = 'G';
+    if (switching && scenario != CPUS_LOGON) return E_ACCESSDENIED;
+    char request = switching ? 'L' : 'G';
     WORD units = 0;
     Password password;
     if (!pipeTransfer(pipe, &request, 1, true) || !pipeTransfer(pipe, &units, sizeof(units), false) ||

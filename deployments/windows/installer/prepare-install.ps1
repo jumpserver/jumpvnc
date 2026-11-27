@@ -22,6 +22,8 @@ Get-Process -Name jumpvnc, sshvnc -ErrorAction SilentlyContinue | Where-Object {
   $_.Path -and ([string]::Equals($_.Path, $agent, [StringComparison]::OrdinalIgnoreCase) -or [string]::Equals($_.Path, $legacyAgent, [StringComparison]::OrdinalIgnoreCase))
 } | Stop-Process -Force -ErrorAction Stop
 if ($Uninstall) {
+  $managed = Join-Path $InstallRoot 'deployments\windows\installer\set-managed-account.ps1'
+  if (Test-Path -LiteralPath $managed) { & $managed -Action Disable }
   & (Join-Path $InstallRoot 'deployments\windows\installer\set-windows-login.ps1') -Action Disable
   if ($service) {
     & "$env:SystemRoot\System32\sc.exe" delete SuperVNC

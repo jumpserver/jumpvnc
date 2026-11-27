@@ -89,7 +89,6 @@ button.danger:hover:enabled { background: #fff4f4; }
 .wide { grid-column: 1 / -1; }
 
 .windows-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-#windows-login-notice { position: absolute; z-index: 2; top: 12px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; width: max-content; max-width: calc(100% - 24px); padding: 8px 12px; border: 1px solid #ddd4bb; border-radius: 6px; background: #fff8e6; color: #594619; font-size: 12px; }
 .windows-fields .checkbox-row, .connection-advanced .checkbox-row { margin-top: 0; }
 .connection-advanced { border-top: 1px solid #e5e8e7; padding-top: 12px; }
 .connection-advanced > summary { width: fit-content; color: #536058; font-size: 12px; cursor: pointer; }

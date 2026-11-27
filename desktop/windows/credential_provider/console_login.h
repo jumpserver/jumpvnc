@@ -15,6 +15,9 @@ constexpr unsigned headerBytes = 10;
 constexpr ULONGLONG requestLifetimeMs = 30000;
 enum class HeaderState { Waiting, Invalid, Ready };
 enum class UserTile { Hidden, EnumeratedUser, OtherLocal };
+constexpr bool switchTileAllowed(CREDENTIAL_PROVIDER_USAGE_SCENARIO scenario, UserTile tile) {
+    return scenario == CPUS_LOGON && tile == UserTile::EnumeratedUser;
+}
 HRESULT selectUserTile(ICredentialProviderUserArray* users, PSID requested, UserTile& tile);
 // An advised unlock publishes an external invitation through CredentialsChanged.
 // Polling inside LogonUI's initial enumeration would consume that transition.
@@ -36,6 +39,6 @@ bool isPhysicalConsole(DWORD session);
 bool resolveLocalAccount(const wchar_t* name, WORD units, Account& account);
 bool canSignIn(DWORD session, CREDENTIAL_PROVIDER_USAGE_SCENARIO scenario, const Account& account);
 bool pipeTransfer(HANDLE pipe, void* buffer, DWORD size, bool write);
-HRESULT serialize(HANDLE pipe, const Account& account, CREDENTIAL_PROVIDER_USAGE_SCENARIO scenario,
+HRESULT serialize(HANDLE pipe, const Account& account, CREDENTIAL_PROVIDER_USAGE_SCENARIO scenario, bool switching,
                   CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION* serialized);
 }

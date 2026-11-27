@@ -35,6 +35,8 @@ UninstallDisplayName=JumpVNC Server
 [Tasks]
 Name: "windowslogin"; Description: "Enable Windows console sign-in from JumpVNC Viewer"; Flags: unchecked
 
+Name: "windowslogin\managedaccount"; Description: "Use a dedicated standard local account (JumpVNCUser) with a device-generated password"; Flags: unchecked
+
 [Files]
 Source: "{#PackageDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#RedistPath}"; DestDir: "{tmp}"; Flags: deleteafterinstall
@@ -76,6 +78,7 @@ begin
   Extra := '';
   if ExpandConstant('{param:NoStartService|0}') = '1' then Extra := '-NoStartService';
   if WizardIsTaskSelected('windowslogin') then Extra := Extra + ' -EnableWindowsLogin';
+  if WizardIsTaskSelected('windowslogin\managedaccount') then Extra := Extra + ' -ManagedAccount';
   if not RunPowerShell(ExpandConstant('{app}\deployments\windows\installer\setup-service.ps1'), Extra) then
     RaiseException('Could not configure JumpVNC. See setup.log in the installation directory.');
 end;

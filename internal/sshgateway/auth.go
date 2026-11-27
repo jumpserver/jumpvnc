@@ -77,7 +77,7 @@ func (s *Server) authConfig(log *slog.Logger) *ssh.ServerConfig {
 		MaxAuthTries: 3,
 		PublicKeyCallback: func(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 			if _, ok := s.keys[string(key.Marshal())]; ok && conn.User() == s.cfg.SSH.User {
-				return nil, nil
+				return &ssh.Permissions{Extensions: map[string]string{"fingerprint": ssh.FingerprintSHA256(key)}}, nil
 			}
 			return nil, errors.New("unauthorized public key")
 		},

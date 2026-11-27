@@ -357,19 +357,21 @@ async function connect(event) {
 function attachDesktop(profile, connection, resume) {
   const screen = $('vnc-screen');
   const signal = resume?.signal;
-  screen.hidden = !!resume;
+  const account = resume?.account || connection.managedAccount || (profile.transport === 'subsystem' && profile.windowsAccount);
+  screen.hidden = !!account;
   status(resume ? '正在恢复 Windows 桌面' : '正在连接桌面', 'connecting');
   const rfb = new MeasuredRFB(screen, connection.url, {
     shared: true,
     credentials: connection.password ? { username: profile.vncUsername, password: connection.password } : {},
   });
+  if (account) rfb.viewOnly = true;
   client = rfb;
   let transition;
   const current = () => client === rfb && !signal?.aborted;
   let desktopName = '';
   const updateEndpoint = () => {
     if (client !== rfb) return;
-    const endpoint = desktopEndpoint(resume ? { ...profile, windowsAccount: resume.account } : profile);
+    const endpoint = desktopEndpoint({ ...profile, windowsAccount: account });
     const host = profile.transport === 'forward' ? profile.vncHost || '127.0.0.1' : profile.host;
     const port = profile.transport === 'forward' ? profile.vncPort : profile.port;
     $('diag-endpoint').textContent = `${host.includes(':') && !host.startsWith('[') ? '[' + host + ']' : host}:${port}`;
@@ -379,20 +381,21 @@ function attachDesktop(profile, connection, resume) {
   };
   rfb.addEventListener('desktopname', ({ detail }) => {
     desktopName = detail.name;
-    if (!resume || connected) updateEndpoint();
+    if (!account || connected) updateEndpoint();
   });
   applyQuality(rfb, $('quality-profile').value);
   rfb.scaleViewport = true;
   rfb.addEventListener('clipboard', ({ detail }) => {
-    if (!current() || (resume && !connected)) return;
+    if (!current() || !connected) return;
     if (clipboard) clipboard.receive(detail.text).catch(clipboardError);
     else $('clipboard-text').value = detail.text;
   });
   rfb.addEventListener('clipboardcapabilities', () => {
     if (current() && connected) clipboard?.sync(true).catch(clipboardError);
   });
-  const showDesktop = async () => {
+  const showDesktop = () => {
     if (!current()) return;
+    rfb.viewOnly = false;
     filesAvailable = connection.files;
     fileLocation = connection.fileLocation;
     updateFileLocation();
@@ -410,16 +413,8 @@ function attachDesktop(profile, connection, resume) {
     listMessage(filesAvailable ? '打开文件管理后显示远程文件' : '文件传输不可用，桌面仍可正常使用');
     startPerformance(rfb, connection.id, profile.transport);
     startClipboard(rfb, connection.id);
-    if (profile.windowsAccount && profile.transport === 'subsystem') {
-      transition = windowsLoginTransition(call('WindowsLogin', connection.id));
-      try {
-        const outcome = await transition.result;
-        if (current() && outcome === 'unconfirmed') showWindowsNotice('Windows 登录请求已发出，服务端响应中断。请在桌面上确认登录结果。');
-      } catch (err) {
-        if (current()) showWindowsNotice(errorMessage(err));
-      }
-    }
   };
+  const restore = () => restoreAfterWindowsLogin(transition, account, displayProfile(profile, profile.vncPassword || connection.password));
   rfb.addEventListener('securityfailure', () => {
     if (current() && (!resume || connected)) {
       form.elements.vncPassword.value = '';
@@ -443,23 +438,34 @@ function attachDesktop(profile, connection, resume) {
   rfb.addEventListener('disconnect', (event) => {
     if (!current() || (resume && !connected)) return;
     if (transition?.mayRecover(rfb.failureReason)) {
-      restoreAfterWindowsLogin(transition, profile.windowsAccount, displayProfile(profile, profile.vncPassword || connection.password));
+      restore();
       return;
     }
     disconnect(rfb.failureReason || (connected && event.detail.clean ? '远程桌面已关闭' : '无法继续连接远程桌面，请重试'));
   });
   if (resume) {
     return authorizeRecoveredDesktop(rfb, signal, () => {
-      status('正在确认 Windows 桌面账号', 'connecting');
+      status('正在确认 Windows 桌面账号 ' + account, 'connecting');
       return call('WindowsDesktopActive', connection.id, resume.account);
     }, resume.remaining).then(showDesktop);
   }
-  rfb.addEventListener('connect', showDesktop, { once: true });
-}
-
-function showWindowsNotice(message) {
-  $('windows-login-message').textContent = message;
-  $('windows-login-notice').hidden = false;
+  rfb.addEventListener('connect', async () => {
+    if (!current()) return;
+    if (!account) return showDesktop();
+    status('正在确认 Windows 桌面账号 ' + account, 'connecting');
+    try {
+      transition = windowsLoginTransition(call('WindowsLogin', connection.id));
+      const outcome = await transition.result;
+      if (!current()) return;
+      if (outcome === 'active') return showDesktop();
+      // A submission is only an acknowledgement from LogonUI. Older servers
+      // answer account checks on a fresh display channel after a submission.
+      if (outcome === 'submitted' || outcome === 'unconfirmed') return restore();
+      throw new Error('服务端未确认 Windows 登录结果');
+    } catch (err) {
+      if (current()) await disconnect('无法打开 ' + account + ' 的桌面。' + errorMessage(err));
+    }
+  }, { once: true });
 }
 
 function resetDesktop(message = '') {
@@ -469,8 +475,6 @@ function resetDesktop(message = '') {
   transferring = false;
   showPanel(null);
   $('connection-metrics').hidden = true;
-  $('windows-login-notice').hidden = true;
-  $('windows-login-message').textContent = '';
   resetPerformance();
   stopClipboard();
   pendingDrop = undefined;
@@ -853,10 +857,6 @@ function changeProtocol() {
 }
 form.elements.protocol.addEventListener('change', changeProtocol);
 form.elements.sshTunnel.addEventListener('change', changeProtocol);
-$('dismiss-windows-login').addEventListener('click', () => {
-  $('windows-login-notice').hidden = true;
-  client?.focus();
-});
 
 $('reconnect').addEventListener('click', () => connect());
 $('edit-connection').addEventListener('click', showConnectionForm);
